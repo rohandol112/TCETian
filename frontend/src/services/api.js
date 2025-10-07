@@ -1,9 +1,33 @@
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api'
+// Determine API base URL based on environment
+const getApiBaseUrl = () => {
+  // Check for explicit VITE_API_URL first
+  if (import.meta.env.VITE_API_URL) {
+    return import.meta.env.VITE_API_URL
+  }
+  
+  // Check for VITE_API_BASE_URL (alternative naming)
+  if (import.meta.env.VITE_API_BASE_URL) {
+    return import.meta.env.VITE_API_BASE_URL
+  }
+  
+  // Production fallback - your actual Render URL
+  if (import.meta.env.PROD) {
+    return 'https://tcetian.onrender.com/api'
+  }
+  
+  // Development fallback
+  return 'http://localhost:5000/api'
+}
+
+const API_BASE_URL = getApiBaseUrl()
 
 console.log('🔧 API Configuration:', {
   VITE_API_URL: import.meta.env.VITE_API_URL,
+  VITE_API_BASE_URL: import.meta.env.VITE_API_BASE_URL,
   API_BASE_URL,
-  mode: import.meta.env.MODE
+  mode: import.meta.env.MODE,
+  isProd: import.meta.env.PROD,
+  environment: import.meta.env.VITE_ENVIRONMENT
 })
 
 class ApiService {

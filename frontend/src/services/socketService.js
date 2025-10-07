@@ -14,7 +14,17 @@ class SocketService {
       return this.socket
     }
 
-    const serverUrl = import.meta.env.VITE_API_URL?.replace('/api', '') || 'http://localhost:5001'
+    // Determine server URL for WebSocket connection
+    let serverUrl
+    if (import.meta.env.VITE_API_URL) {
+      serverUrl = import.meta.env.VITE_API_URL.replace('/api', '')
+    } else if (import.meta.env.VITE_API_BASE_URL) {
+      serverUrl = import.meta.env.VITE_API_BASE_URL.replace('/api', '')
+    } else if (import.meta.env.PROD) {
+      serverUrl = 'https://tcetian.onrender.com'
+    } else {
+      serverUrl = 'http://localhost:5000'
+    }
     
     this.socket = io(serverUrl, {
       auth: {

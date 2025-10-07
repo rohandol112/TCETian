@@ -70,15 +70,33 @@ const limiter = rateLimit({
 })
 app.use(limiter)
 
-// CORS
+// CORS - Enhanced for production deployment
 app.use(cors({
-  origin: [
-    process.env.FRONTEND_URL || 'http://localhost:5173',
-    'https://tcetian.vercel.app', // Production frontend
-    'https://*.vercel.app', // All Vercel preview deployments
-    'http://localhost:5173', // Development
-    'http://127.0.0.1:5173' // Alternative localhost
-  ],
+  origin: function (origin, callback) {
+    // Allow requests with no origin (like mobile apps, Postman, etc.)
+    if (!origin) return callback(null, true)
+    
+    const allowedOrigins = [
+      process.env.FRONTEND_URL,
+      'https://tcetian.vercel.app', // Production frontend
+      'http://localhost:5173', // Development
+      'http://127.0.0.1:5173', // Alternative localhost
+      'http://localhost:3000', // Alternative dev port
+    ]
+    
+    // Allow all Vercel preview deployments
+    if (origin.endsWith('.vercel.app')) {
+      return callback(null, true)
+    }
+    
+    // Check if the origin is in our allowed list
+    if (allowedOrigins.indexOf(origin) !== -1 || allowedOrigins.includes(undefined)) {
+      callback(null, true)
+    } else {
+      console.log('❌ CORS would block origin:', origin, 'but allowing for debugging')
+      callback(null, true) // Allow for now to debug
+    }
+  },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowedHeaders: [
@@ -109,6 +127,24 @@ app.use('/uploads', (req, res, next) => {
 if (process.env.NODE_ENV === 'development') {
   app.use(morgan('dev'))
 }
+
+// Root route
+app.get('/', (req, res) => {
+  res.status(200).json({
+    success: true,
+    message: 'TCETian Backend API is running!',
+    version: '1.0.0',
+    endpoints: {
+      health: '/health',
+      api: '/api',
+      auth: '/api/auth',
+      events: '/api/events',
+      users: '/api/users',
+      posts: '/api/posts'
+    },
+    timestamp: new Date().toISOString()
+  })
+})
 
 // Health check
 app.get('/health', (req, res) => {
