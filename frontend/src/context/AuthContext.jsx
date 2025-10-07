@@ -65,18 +65,30 @@ export const AuthProvider = ({ children }) => {
   const [state, dispatch] = useReducer(authReducer, initialState)
   
   useEffect(() => {
-    // Only run on client-side to prevent Vercel DNS issues
-    if (typeof window === 'undefined') {
+    // Aggressively prevent server-side execution
+    if (typeof window === 'undefined' || typeof document === 'undefined') {
+      console.warn('🚨 AuthContext: Server-side detected, skipping auth check')
       dispatch({ type: 'LOGOUT' })
       return
     }
 
-    // Check if user is authenticated on app load
-    if (authService.isAuthenticated()) {
-      loadUser()
-    } else {
-      dispatch({ type: 'LOGOUT' })
+    // Add a small delay to ensure we're fully on client-side
+    const initAuth = async () => {
+      try {
+        // Check if user is authenticated on app load
+        if (authService.isAuthenticated()) {
+          await loadUser()
+        } else {
+          dispatch({ type: 'LOGOUT' })
+        }
+      } catch (error) {
+        console.error('🚨 Auth initialization failed:', error)
+        dispatch({ type: 'LOGOUT' })
+      }
     }
+
+    // Delay execution to ensure client-side
+    setTimeout(initAuth, 100)
   }, [])
 
   // Load user from token

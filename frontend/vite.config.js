@@ -19,5 +19,23 @@ export default defineConfig({
   server: {
     port: 5173,
     open: true
+  },
+  build: {
+    // Ensure no server-side API calls during build
+    rollupOptions: {
+      external: [],
+      output: {
+        manualChunks: undefined
+      }
+    },
+    // Disable SSR completely
+    ssr: false,
+    // Client-side only build
+    target: 'es2015',
+    minify: 'esbuild'
+  },
+  // Prevent any server-side execution
+  ssr: {
+    noExternal: []
   }
 })

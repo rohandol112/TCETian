@@ -1,9 +1,9 @@
 // Determine API base URL based on environment
 const getApiBaseUrl = () => {
-  // Only use API calls on client-side to avoid Vercel DNS issues
-  if (typeof window === 'undefined') {
-    console.warn('🚨 API calls attempted on server-side - blocked to prevent DNS errors')
-    return null
+  // Aggressively block ANY server-side execution
+  if (typeof window === 'undefined' || typeof document === 'undefined') {
+    console.warn('🚨 SERVER-SIDE DETECTED - All API calls blocked to prevent Vercel DNS errors')
+    return 'BLOCKED_SSR'
   }
 
   // Check for explicit VITE_API_URL first
@@ -84,16 +84,37 @@ class ApiService {
 
   // Generic API call method
   async apiCall(endpoint, options = {}) {
-    // Block server-side API calls to prevent Vercel DNS errors
-    if (typeof window === 'undefined') {
+    // Aggressively block server-side API calls to prevent Vercel DNS errors
+    if (typeof window === 'undefined' || typeof document === 'undefined') {
       console.warn('🚨 API call blocked on server-side:', endpoint)
-      return { success: false, message: 'Server-side API calls are disabled' }
+      return { 
+        success: false, 
+        message: 'Server-side API calls are disabled to prevent Vercel DNS errors',
+        data: null,
+        error: 'SSR_BLOCKED'
+      }
     }
 
-    // Check if baseURL is available (null on server-side)
+    // Check if baseURL is blocked (server-side detected)
+    if (this.baseURL === 'BLOCKED_SSR') {
+      console.warn('🚨 API baseURL blocked for server-side rendering')
+      return { 
+        success: false, 
+        message: 'API not available during server-side rendering',
+        data: null,
+        error: 'SSR_BLOCKED'
+      }
+    }
+
+    // Check if baseURL is available
     if (!this.baseURL) {
       console.warn('🚨 API baseURL not available')
-      return { success: false, message: 'API not available' }
+      return { 
+        success: false, 
+        message: 'API not available',
+        data: null,
+        error: 'NO_API_URL'
+      }
     }
 
     const url = `${this.baseURL}${endpoint}`

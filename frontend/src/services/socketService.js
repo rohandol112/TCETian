@@ -10,6 +10,12 @@ class SocketService {
 
   // Initialize socket connection
   connect(token) {
+    // Aggressively block server-side socket connections
+    if (typeof window === 'undefined' || typeof document === 'undefined') {
+      console.warn('🚨 Socket connection blocked - server-side detected')
+      return null
+    }
+
     if (this.socket?.connected) {
       return this.socket
     }
