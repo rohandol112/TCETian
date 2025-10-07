@@ -25,16 +25,21 @@ const getApiBaseUrl = () => {
   return 'http://localhost:5000/api'
 }
 
-const API_BASE_URL = getApiBaseUrl()
-
-console.log('🔧 API Configuration:', {
-  VITE_API_URL: import.meta.env.VITE_API_URL,
-  VITE_API_BASE_URL: import.meta.env.VITE_API_BASE_URL,
-  API_BASE_URL,
-  mode: import.meta.env.MODE,
-  isProd: import.meta.env.PROD,
-  environment: import.meta.env.VITE_ENVIRONMENT
-})
+// Initialize API_BASE_URL only on client-side
+let API_BASE_URL = null
+if (typeof window !== 'undefined') {
+  API_BASE_URL = getApiBaseUrl()
+  console.log('🔧 API Configuration:', {
+    VITE_API_URL: import.meta.env.VITE_API_URL,
+    VITE_API_BASE_URL: import.meta.env.VITE_API_BASE_URL,
+    API_BASE_URL,
+    mode: import.meta.env.MODE,
+    isProd: import.meta.env.PROD,
+    environment: import.meta.env.VITE_ENVIRONMENT
+  })
+} else {
+  console.log('🚨 Server-side detected - API service disabled')
+}
 
 class ApiService {
   constructor() {
