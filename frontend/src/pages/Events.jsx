@@ -14,9 +14,7 @@ import {
 import { useAuth } from '../context/AuthContext'
 import { useToast } from '../context/ToastContext'
 import { useSocket } from '../context/SocketContext'
-import { eventService } from '../services/ev                  ) : null}
-                </div>
-              </div>e.js'
+import { eventService } from '../services/eventService.js'
 import CreateEventModal from '../components/events/CreateEventModal'
 import EventDetailsModal from '../components/events/EventDetailsModal'
 import AttendeesModal from '../components/events/AttendeesModal'
@@ -311,66 +309,52 @@ const Events = () => {
                 </div>
                 
                 {/* Action Buttons */}
-                <div className="space-y-2">
-                  {/* View Details Button - Always visible */}
-                  <button 
-                    onClick={() => {
-                      setSelectedEventId(event._id)
-                      setShowDetailsModal(true)
-                    }}
-                    className="w-full bg-white/10 hover:bg-white/20 text-white py-2 px-4 rounded-lg transition-all duration-200 border border-white/20 flex items-center justify-center space-x-2 font-medium"
-                  >
-                    <FiEye className="w-4 h-4" />
-                    <span>View Details & Share</span>
-                  </button>
-
-                  {/* Role-specific buttons */}
-                  {isAuthenticated && user?.role === 'student' ? (
-                    (() => {
-                      const rsvpStatus = getUserRSVPStatus(event)
-                      
-                      if (rsvpStatus === 'confirmed') {
-                        return (
-                          <div className="space-y-2">
-                            <div className="w-full bg-blue-500/20 text-blue-400 py-2 px-4 rounded-lg border border-blue-500/30 flex items-center justify-center space-x-2">
-                              <span className="font-semibold">Already RSVPd ✓</span>
-                            </div>
-                            <button 
-                              onClick={() => handleCancelRSVP(event._id)}
-                              className="w-full bg-red-500/20 hover:bg-red-500/30 text-red-400 py-2 px-4 rounded-lg transition-all duration-200 border border-red-500/30 text-sm"
-                            >
-                              Cancel RSVP
-                            </button>
+                {isAuthenticated && user?.role === 'student' ? (
+                  (() => {
+                    const rsvpStatus = getUserRSVPStatus(event)
+                    
+                    if (rsvpStatus === 'confirmed') {
+                      return (
+                        <div className="space-y-2">
+                          <div className="w-full bg-blue-500/20 text-blue-400 py-2 px-4 rounded-lg border border-blue-500/30 flex items-center justify-center space-x-2">
+                            <span className="font-semibold">Already RSVPd ✓</span>
                           </div>
-                        )
-                      } else if (rsvpStatus === 'waitlist') {
-                        return (
-                          <div className="space-y-2">
-                            <div className="w-full bg-yellow-500/20 text-yellow-400 py-2 px-4 rounded-lg border border-yellow-500/30 flex items-center justify-center space-x-2">
-                              <FiClock className="w-4 h-4" />
-                              <span className="font-semibold">On Waitlist</span>
-                            </div>
-                            <button 
-                              onClick={() => handleCancelRSVP(event._id)}
-                              className="w-full bg-red-500/20 hover:bg-red-500/30 text-red-400 py-2 px-4 rounded-lg transition-all duration-200 border border-red-500/30 text-sm"
-                            >
-                              Leave Waitlist
-                            </button>
-                          </div>
-                        )
-                      } else {
-                        return (
                           <button 
-                            onClick={() => handleRSVP(event._id)}
-                            className="w-full bg-green-500/20 hover:bg-green-500/30 text-green-400 py-2 px-4 rounded-lg transition-all duration-200 border border-green-500/30 flex items-center justify-center space-x-2"
+                            onClick={() => handleCancelRSVP(event._id)}
+                            className="w-full bg-red-500/20 hover:bg-red-500/30 text-red-400 py-2 px-4 rounded-lg transition-all duration-200 border border-red-500/30 text-sm"
                           >
-                            <FiUsers className="w-4 h-4" />
-                            <span>RSVP Now</span>
+                            Cancel RSVP
                           </button>
-                        )
-                      }
-                    })()
-                  ) : isAuthenticated && user?.role === 'club' && isEventOrganizer(event) ? (
+                        </div>
+                      )
+                    } else if (rsvpStatus === 'waitlist') {
+                      return (
+                        <div className="space-y-2">
+                          <div className="w-full bg-yellow-500/20 text-yellow-400 py-2 px-4 rounded-lg border border-yellow-500/30 flex items-center justify-center space-x-2">
+                            <FiClock className="w-4 h-4" />
+                            <span className="font-semibold">On Waitlist</span>
+                          </div>
+                          <button 
+                            onClick={() => handleCancelRSVP(event._id)}
+                            className="w-full bg-red-500/20 hover:bg-red-500/30 text-red-400 py-2 px-4 rounded-lg transition-all duration-200 border border-red-500/30 text-sm"
+                          >
+                            Leave Waitlist
+                          </button>
+                        </div>
+                      )
+                    } else {
+                      return (
+                        <button 
+                          onClick={() => handleRSVP(event._id)}
+                          className="w-full bg-green-500/20 hover:bg-green-500/30 text-green-400 py-2 px-4 rounded-lg transition-all duration-200 border border-green-500/30 flex items-center justify-center space-x-2"
+                        >
+                          <FiUsers className="w-4 h-4" />
+                          <span>RSVP Now</span>
+                        </button>
+                      )
+                    }
+                  })()
+                ) : isAuthenticated && user?.role === 'club' && isEventOrganizer(event) ? (
                   <div className="space-y-2">
                     <button 
                       onClick={() => handleViewAttendees(event)}
