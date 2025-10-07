@@ -9,9 +9,6 @@ import Navbar from './components/layout/Navbar'
 import Footer from './components/layout/Footer'
 import Stars from './components/effects/Stars'
 
-// Debug Components (temporary)
-import ConnectionTest from './components/debug/ConnectionTest'
-
 // Pages
 import Home from './pages/Home'
 import Events from './pages/Events'
@@ -75,9 +72,6 @@ function App() {
             
             {/* Footer */}
             <Footer />
-            
-            {/* Connection Test - Remove after testing */}
-            <ConnectionTest />
           </div>
             </Router>
           </SocketProvider>
