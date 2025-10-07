@@ -2,10 +2,5 @@
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
   "installCommand": "npm ci",
-  "devCommand": "npm run dev",
-  "functions": {
-    "app/[[...routes]].js": {
-      "maxDuration": 10
-    }
-  }
+  "devCommand": "npm run dev"
 }
