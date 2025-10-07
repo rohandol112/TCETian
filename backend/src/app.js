@@ -239,6 +239,16 @@ app.use('/api/comments', commentRoutes)
 app.use('/api/forums', forumRoutes)
 app.use('/api/analytics', analyticsRoutes)
 
+// Simple test endpoint for CORS verification
+app.get('/api/test', (req, res) => {
+  res.json({ 
+    success: true, 
+    message: 'CORS is working! Frontend can connect to backend.',
+    timestamp: new Date().toISOString(),
+    headers: req.headers.origin
+  })
+})
+
 
 // Performance monitoring routes
 if (process.env.NODE_ENV === 'development' || process.env.ENABLE_PERFORMANCE_MONITORING === 'true') {

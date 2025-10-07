@@ -10,7 +10,7 @@ const getApiBaseUrl = () => {
     return import.meta.env.VITE_API_BASE_URL
   }
   
-  // Production fallback - your actual Render URL
+  // Production fallback - using your actual Render URL
   if (import.meta.env.PROD) {
     return 'https://tcetian.onrender.com/api'
   }
