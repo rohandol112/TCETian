@@ -19,7 +19,7 @@ import Register from './pages/auth/Register'
 import NotFound from './pages/NotFound'
 
 // Event Components
-import EventDashboard from './components/events/EventDashboard'
+
 
 // Protected Route Component
 import ProtectedRoute from './components/auth/ProtectedRoute'
@@ -48,14 +48,6 @@ function App() {
                 <Route path="/register" element={<Register />} />
                 
                 {/* Protected Routes */}
-                <Route 
-                  path="/dashboard" 
-                  element={
-                    <ProtectedRoute>
-                      <EventDashboard />
-                    </ProtectedRoute>
-                  } 
-                />
                 <Route 
                   path="/social" 
                   element={

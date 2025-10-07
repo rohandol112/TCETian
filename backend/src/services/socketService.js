@@ -6,7 +6,7 @@ class SocketService {
   constructor() {
     this.io = null
     this.connectedUsers = new Map() // userId -> socketId
-    this.userRooms = new Map() // socketId -> Set of room names
+    this.userRooms = new Map() 
     this.userSockets = new Map() // userId -> socket object
     this.userActivity = new Map() // userId -> last activity timestamp
     this.roomUsers = new Map() // roomName -> Set of userIds
@@ -174,6 +174,20 @@ class SocketService {
         this.userRooms.get(socket.id).add('events_feed')
       })
 
+      // Handle joining analytics room
+      socket.on('join_analytics', () => {
+        socket.join('analytics')
+        this.userRooms.get(socket.id).add('analytics')
+        console.log(`User ${socket.userId} joined analytics room`)
+      })
+
+      // Handle leaving analytics room
+      socket.on('leave_analytics', () => {
+        socket.leave('analytics')
+        this.userRooms.get(socket.id).delete('analytics')
+        console.log(`User ${socket.userId} left analytics room`)
+      })
+
       // Handle leaving events feed
       socket.on('leave_events_feed', () => {
         this.leaveEventsFeed(socket)
@@ -230,18 +244,44 @@ class SocketService {
         })
       })
 
+      // Handle event sharing
+      socket.on('event_shared', ({ eventId, shareCount }) => {
+        console.log(`Event ${eventId} shared. New share count: ${shareCount}`)
+        
+        // Broadcast to all users viewing this event
+        socket.to(`event_${eventId}`).emit('event_share_update', {
+          eventId,
+          shareCount,
+          sharedBy: socket.userId,
+          timestamp: new Date().toISOString()
+        })
+        
+        // Also broadcast to events feed for real-time stats
+        socket.broadcast.to('events_feed').emit('event_stats_update', {
+          eventId,
+          type: 'share',
+          shareCount,
+          timestamp: new Date().toISOString()
+        })
+      })
+
       // Handle unified event broadcasting from frontend
       socket.on('broadcast_new_event', (eventData) => {
         console.log('Broadcasting new event from frontend:', eventData.eventId)
         
-        // Broadcast to all users in events feed
-        socket.broadcast.to('events_feed').emit('new_event_created', {
+        const payload = {
           ...eventData,
           broadcastedBy: socket.userId,
           timestamp: new Date().toISOString()
-        })
+        }
+
+        // Broadcast to all users in events feed
+        socket.broadcast.to('events_feed').emit('new_event', payload)
         
-        // Also broadcast to general social feed for visibility
+        // Also broadcast to general audience to match API-triggered broadcasts
+        socket.broadcast.emit('new_event', payload)
+        
+        // Additionally notify social feed for visibility
         socket.broadcast.to('social_feed').emit('event_notification', {
           type: 'new_event',
           message: `New ${eventData.category} event: ${eventData.title}`,
@@ -334,6 +374,38 @@ class SocketService {
     }
   }
 
+  // Notify about new comment with email integration
+  notifyNewComment(postId, commentData, emailNotified = false) {
+    if (!this.io) return
+
+    try {
+      // Real-time notification to post subscribers
+      this.io.to(`post_${postId}`).emit('new_comment', {
+        postId,
+        comment: commentData,
+        emailSent: emailNotified,
+        timestamp: new Date()
+      })
+
+      // Personal notification to post author if different from commenter
+      if (commentData.postAuthorId && commentData.postAuthorId !== commentData.authorId) {
+        this.sendNotificationToUser(commentData.postAuthorId, {
+          type: 'new_comment',
+          title: 'New Comment',
+          message: `${commentData.authorName} commented on your post: "${commentData.content.substring(0, 50)}..."`,
+          postId: postId,
+          commentId: commentData._id,
+          emailNotified,
+          avatar: commentData.authorAvatar
+        })
+      }
+      
+      console.log(`💬 New comment notification sent for post ${postId}`)
+    } catch (error) {
+      console.error('❌ Failed to send comment notification:', error)
+    }
+  }
+
   // Emit comment update (votes, replies)
   emitCommentUpdate(postId, commentId, update) {
     if (this.io) {
@@ -345,6 +417,20 @@ class SocketService {
   emitNotification(userId, notification) {
     if (this.io) {
       this.io.to(`user_${userId}`).emit('notification', notification)
+    }
+  }
+
+  // Send notification with email integration status
+  sendNotificationToUser(userId, notification) {
+    if (this.io) {
+      this.io.to(`user_${userId}`).emit('notification', {
+        ...notification,
+        id: `notif_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        read: false,
+        createdAt: new Date()
+      })
+      
+      console.log(`🔔 Real-time notification sent to user ${userId}: ${notification.title}`)
     }
   }
 

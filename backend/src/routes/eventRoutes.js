@@ -8,23 +8,28 @@ import {
   rsvpEvent,
   cancelRSVP,
   getEventAttendees,
-  getDashboardStats
+  getDashboardStats,
+  shareEvent,
+  getEventShareInfo
 } from '../controllers/eventController.js'
 import { authenticate, authorize, optionalAuth } from '../middleware/auth.js'
-import { upload } from '../utils/imageHandler.js'
 
 const router = express.Router()
+
+// Club-only routes (MUST come before /:id to avoid conflicts)
+router.get('/dashboard/stats', authenticate, authorize('club'), getDashboardStats)
 
 // Public routes
 router.get('/', optionalAuth, getEvents)
 router.get('/:id', optionalAuth, getEvent)
+router.post('/:id/share', shareEvent)
+router.get('/:id/share-info', getEventShareInfo)
 
-// Club-only routes
-router.post('/', authenticate, authorize('club'), upload.single('poster'), createEvent)
-router.put('/:id', authenticate, authorize('club'), upload.single('poster'), updateEvent)
+// Club-only routes (continued)
+router.post('/', authenticate, authorize('club'), createEvent)
+router.put('/:id', authenticate, authorize('club'), updateEvent)
 router.delete('/:id', authenticate, authorize('club'), deleteEvent)
 router.get('/:id/attendees', authenticate, authorize('club'), getEventAttendees)
-router.get('/dashboard/stats', authenticate, authorize('club'), getDashboardStats)
 
 // Student-only routes
 router.post('/:id/rsvp', authenticate, authorize('student'), rsvpEvent)

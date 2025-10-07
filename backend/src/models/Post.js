@@ -163,21 +163,55 @@ postSchema.virtual('hotScore').get(function() {
   return (voteScore + commentBonus) / Math.pow(ageInHours + 2, 1.8)
 })
 
-// Index for efficient queries
-postSchema.index({ createdAt: -1 })
+// Comprehensive indexing strategy for 500+ posts performance
+// Primary indexes for common queries
+postSchema.index({ createdAt: -1 }) // Sort by newest
+postSchema.index({ isHidden: 1, createdAt: -1 }) // Active posts sorted by time
+
+// Category and filter indexes
 postSchema.index({ category: 1, createdAt: -1 })
+postSchema.index({ category: 1, isHidden: 1, createdAt: -1 })
+postSchema.index({ targetYear: 1, targetBranch: 1, isHidden: 1 })
+
+// Author and engagement indexes
 postSchema.index({ author: 1, createdAt: -1 })
 postSchema.index({ 'upvotes.user': 1 })
 postSchema.index({ 'downvotes.user': 1 })
-postSchema.index({ targetYear: 1, targetBranch: 1 })
 postSchema.index({ tags: 1 })
 
-// Text search index
+// Compound indexes for hot/trending algorithms
+postSchema.index({ 
+  isHidden: 1, 
+  createdAt: -1,
+  'upvotes': 1,
+  'downvotes': 1 
+})
+
+// Sparse index for pinned posts
+postSchema.index({ isPinned: 1 }, { sparse: true })
+
+// TTL index for view count optimization (optional - for analytics)
+postSchema.index({ createdAt: 1 }, { 
+  expireAfterSeconds: 365 * 24 * 60 * 60, // 1 year
+  partialFilterExpression: { viewCount: { $lt: 10 } } // Only low-engagement posts
+})
+
+// Text search index with weights
 postSchema.index({ 
   title: 'text', 
   content: 'text', 
   tags: 'text' 
+}, {
+  weights: {
+    title: 10,    // Title matches are most important
+    tags: 5,      // Tag matches are moderately important  
+    content: 1    // Content matches are least important
+  },
+  name: 'post_text_search'
 })
+
+// Geospatial index for location-based posts (future feature)
+// postSchema.index({ location: '2dsphere' })
 
 // Ensure virtuals are included in JSON
 postSchema.set('toJSON', { virtuals: true })

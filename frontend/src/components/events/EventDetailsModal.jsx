@@ -7,6 +7,8 @@ import { useAuth } from '../../context/AuthContext'
 import { useToast } from '../../context/ToastContext'
 import { useSocket } from '../../context/SocketContext'
 import { eventService } from '../../services/eventService'
+import CreateEventModal from './CreateEventModal'
+
 
 const EventDetailsModal = ({ eventId, isOpen, onClose, onEventUpdated }) => {
   const { user, isAuthenticated } = useAuth()
@@ -16,7 +18,13 @@ const EventDetailsModal = ({ eventId, isOpen, onClose, onEventUpdated }) => {
   const [event, setEvent] = useState(null)
   const [loading, setLoading] = useState(false)
   const [rsvpLoading, setRsvpLoading] = useState(false)
-  const [attendees, setAttendees] = useState([])
+  const [attendees, setAttendees] = useState({
+    confirmed: [],
+    waitlist: [],
+    stats: null
+  })
+  const [attendeesLoading, setAttendeesLoading] = useState(false)
+  const [showEditModal, setShowEditModal] = useState(false)
 
   useEffect(() => {
     if (isOpen && eventId) {
@@ -35,6 +43,43 @@ const EventDetailsModal = ({ eventId, isOpen, onClose, onEventUpdated }) => {
       }
     }
   }, [isOpen, eventId, isConnected, socket])
+
+  // Listen for real-time share updates
+  useEffect(() => {
+    if (!isConnected || !socket || !eventId) return
+
+    const handleShareUpdate = (data) => {
+      if (data.eventId === eventId) {
+        setEvent(prevEvent => ({
+          ...prevEvent,
+          analytics: {
+            ...prevEvent.analytics,
+            shareCount: data.shareCount
+          }
+        }))
+      }
+    }
+
+    const handleStatsUpdate = (data) => {
+      if (data.eventId === eventId && data.type === 'share') {
+        setEvent(prevEvent => ({
+          ...prevEvent,
+          analytics: {
+            ...prevEvent.analytics,
+            shareCount: data.shareCount
+          }
+        }))
+      }
+    }
+
+    socket.on('event_share_update', handleShareUpdate)
+    socket.on('event_stats_update', handleStatsUpdate)
+
+    return () => {
+      socket.off('event_share_update', handleShareUpdate)
+      socket.off('event_stats_update', handleStatsUpdate)
+    }
+  }, [isConnected, socket, eventId])
 
   const loadEventDetails = async () => {
     setLoading(true)
@@ -58,13 +103,19 @@ const EventDetailsModal = ({ eventId, isOpen, onClose, onEventUpdated }) => {
 
   const loadAttendees = async () => {
     try {
+      setAttendeesLoading(true)
       const response = await eventService.getEventAttendees(eventId)
-      if (response.success) {
-        setAttendees(response.data.attendees)
+      if (response.success && response.data) {
+        const { confirmed = [], waitlist = [], stats = null } = response.data
+        setAttendees({ confirmed, waitlist, stats })
+      } else {
+        setAttendees({ confirmed: [], waitlist: [], stats: null })
       }
     } catch (error) {
       console.error('Error loading attendees:', error)
+      setAttendees({ confirmed: [], waitlist: [], stats: null })
     }
+    setAttendeesLoading(false)
   }
 
   const handleRSVP = async () => {
@@ -142,8 +193,52 @@ const EventDetailsModal = ({ eventId, isOpen, onClose, onEventUpdated }) => {
       onClose()
       if (onEventUpdated) onEventUpdated()
     } catch (error) {
-      showToast('Failed to delete event', 'error')
+      showToast(error.message, 'error')
     }
+  }
+
+  const handleShareEvent = async () => {
+    try {
+      const response = await eventService.shareEvent(eventId)
+      
+      if (response.success) {
+        const shareUrl = response.data.shareUrl
+        
+        // Copy to clipboard
+        await navigator.clipboard.writeText(shareUrl)
+        showToast('Event link copied to clipboard!', 'success')
+        
+        // Update share count locally
+        if (event) {
+          setEvent({
+            ...event,
+            shareCount: response.data.shareCount
+          })
+        }
+        
+        // Emit socket event
+        if (isConnected && socket) {
+          socket.emit('event_shared', {
+            eventId,
+            shareCount: response.data.shareCount
+          })
+        }
+      }
+    } catch (error) {
+      showToast('Failed to share event', 'error')
+    }
+  }
+
+  const handleEditEvent = () => {
+    setShowEditModal(true)
+  }
+
+  const handleEventUpdated = async () => {
+    await loadEventDetails()
+    if (onEventUpdated) {
+      onEventUpdated()
+    }
+    setShowEditModal(false)
   }
 
   const formatDate = (dateString) => {
@@ -165,8 +260,13 @@ const EventDetailsModal = ({ eventId, isOpen, onClose, onEventUpdated }) => {
 
   const isUserRSVPd = () => {
     return event?.rsvpUsers?.some(rsvp => 
-      rsvp.user._id === user?.id && rsvp.status === 'confirmed'
+      (rsvp.user._id || rsvp.user) === user?.id && rsvp.status === 'confirmed'
     )
+  }
+
+  const getUserRSVPStatus = () => {
+    // Use the backend-provided userRsvpStatus instead of parsing rsvpUsers
+    return event?.userRsvpStatus || null
   }
 
   const isOrganizer = () => {
@@ -188,38 +288,29 @@ const EventDetailsModal = ({ eventId, isOpen, onClose, onEventUpdated }) => {
           ) : event ? (
             <>
               {/* Header */}
-              <div className="relative">
-                {event.imageUrl && (
-                  <img 
-                    src={event.imageUrl} 
-                    alt={event.title}
-                    className="w-full h-64 object-cover rounded-t-2xl"
-                  />
-                )}
-                <div className={`p-6 ${event.imageUrl ? 'bg-gradient-to-t from-black/80 to-transparent absolute bottom-0 left-0 right-0' : ''}`}>
-                  <div className="flex items-start justify-between">
-                    <div className="flex-1">
-                      <div className="flex items-center space-x-3 mb-2">
-                        <span className="px-3 py-1 bg-purple-500/20 text-purple-300 rounded-full text-sm">
-                          {event.category}
+              <div className="p-6">
+                <div className="flex items-start justify-between">
+                  <div className="flex-1">
+                    <div className="flex items-center space-x-3 mb-2">
+                      <span className="px-3 py-1 bg-purple-500/20 text-purple-300 rounded-full text-sm">
+                        {event.category}
+                      </span>
+                      {isConnected && (
+                        <span className="flex items-center text-xs text-green-400">
+                          <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse mr-1"></div>
+                          Live
                         </span>
-                        {isConnected && (
-                          <span className="flex items-center text-xs text-green-400">
-                            <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse mr-1"></div>
-                            Live
-                          </span>
-                        )}
-                      </div>
-                      <h2 className="text-3xl font-bold text-white mb-2">{event.title}</h2>
-                      <p className="text-gray-300">{event.description}</p>
+                      )}
                     </div>
-                    <button 
-                      onClick={onClose}
-                      className="p-2 hover:bg-white/10 rounded-lg transition-colors"
-                    >
-                      <FiX className="w-6 h-6" />
-                    </button>
+                    <h2 className="text-3xl font-bold text-white mb-2">{event.title}</h2>
+                    <p className="text-gray-300">{event.description}</p>
                   </div>
+                  <button 
+                    onClick={onClose}
+                    className="p-2 hover:bg-white/10 rounded-lg transition-colors"
+                  >
+                    <FiX className="w-6 h-6" />
+                  </button>
                 </div>
               </div>
 
@@ -351,6 +442,7 @@ const EventDetailsModal = ({ eventId, isOpen, onClose, onEventUpdated }) => {
                         isOrganizer() ? (
                           <>
                             <button 
+                              onClick={handleEditEvent}
                               className="w-full btn-gradient py-3 rounded-xl font-semibold flex items-center justify-center space-x-2"
                             >
                               <FiEdit className="w-5 h-5" />
@@ -365,24 +457,55 @@ const EventDetailsModal = ({ eventId, isOpen, onClose, onEventUpdated }) => {
                             </button>
                           </>
                         ) : user?.role === 'student' ? (
-                          isUserRSVPd() ? (
-                            <button 
-                              onClick={handleCancelRSVP}
-                              disabled={rsvpLoading}
-                              className="w-full bg-red-500/20 hover:bg-red-500/30 text-red-400 py-3 rounded-xl font-semibold flex items-center justify-center space-x-2 border border-red-500/30 transition-colors disabled:opacity-50"
-                            >
-                              <FiXCircle className="w-5 h-5" />
-                              <span>{rsvpLoading ? 'Cancelling...' : 'Cancel RSVP'}</span>
-                            </button>
+                          getUserRSVPStatus() === 'confirmed' ? (
+                            <div className="space-y-3">
+                              <div className="w-full bg-blue-500/20 text-blue-400 py-3 rounded-xl border border-blue-500/30 flex items-center justify-center space-x-2">
+                                <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                                </svg>
+                                <span className="font-semibold">You're Already RSVPd! ✓</span>
+                              </div>
+                              <div className="p-3 bg-blue-500/10 border border-blue-500/20 rounded-xl text-center">
+                                <p className="text-blue-400 text-sm mb-2">🎉 You've successfully registered for this event!</p>
+                                <p className="text-xs text-gray-400">Check your email for event updates and details.</p>
+                              </div>
+                              <button 
+                                onClick={handleCancelRSVP}
+                                disabled={rsvpLoading}
+                                className="w-full bg-red-500/20 hover:bg-red-500/30 text-red-400 py-3 rounded-xl font-semibold flex items-center justify-center space-x-2 border border-red-500/30 transition-colors disabled:opacity-50"
+                              >
+                                <FiXCircle className="w-5 h-5" />
+                                <span>{rsvpLoading ? 'Cancelling...' : 'Cancel RSVP'}</span>
+                              </button>
+                            </div>
+                          ) : getUserRSVPStatus() === 'waitlist' ? (
+                            <div className="space-y-3">
+                              <div className="w-full bg-yellow-500/20 text-yellow-400 py-3 rounded-xl border border-yellow-500/30 flex items-center justify-center space-x-2">
+                                <FiClock className="w-5 h-5" />
+                                <span className="font-semibold">You're on the Waitlist</span>
+                              </div>
+                              <div className="p-3 bg-yellow-500/10 border border-yellow-500/20 rounded-xl text-center">
+                                <p className="text-yellow-400 text-sm mb-2">⏳ You'll be notified if a spot opens up!</p>
+                                <p className="text-xs text-gray-400">Stay tuned for updates via email.</p>
+                              </div>
+                              <button 
+                                onClick={handleCancelRSVP}
+                                disabled={rsvpLoading}
+                                className="w-full bg-red-500/20 hover:bg-red-500/30 text-red-400 py-3 rounded-xl font-semibold flex items-center justify-center space-x-2 border border-red-500/30 transition-colors disabled:opacity-50"
+                              >
+                                <FiXCircle className="w-5 h-5" />
+                                <span>{rsvpLoading ? 'Leaving...' : 'Leave Waitlist'}</span>
+                              </button>
+                            </div>
                           ) : (
                             <button 
                               onClick={handleRSVP}
-                              disabled={rsvpLoading || event.isFull}
+                              disabled={rsvpLoading}
                               className="w-full bg-green-500/20 hover:bg-green-500/30 text-green-400 py-3 rounded-xl font-semibold flex items-center justify-center space-x-2 border border-green-500/30 transition-colors disabled:opacity-50"
                             >
                               <FiCheckCircle className="w-5 h-5" />
                               <span>
-                                {rsvpLoading ? 'Processing...' : event.isFull ? 'Event Full' : 'RSVP Now'}
+                                {rsvpLoading ? 'Processing...' : event.isFull ? 'Join Waitlist' : 'RSVP Now'}
                               </span>
                             </button>
                           )
@@ -397,7 +520,10 @@ const EventDetailsModal = ({ eventId, isOpen, onClose, onEventUpdated }) => {
                         </div>
                       )}
 
-                      <button className="w-full bg-white/10 hover:bg-white/20 py-3 rounded-xl font-semibold flex items-center justify-center space-x-2 transition-colors">
+                      <button 
+                        onClick={handleShareEvent}
+                        className="w-full bg-white/10 hover:bg-white/20 py-3 rounded-xl font-semibold flex items-center justify-center space-x-2 transition-colors"
+                      >
                         <FiShare2 className="w-5 h-5" />
                         <span>Share Event</span>
                       </button>
@@ -407,27 +533,85 @@ const EventDetailsModal = ({ eventId, isOpen, onClose, onEventUpdated }) => {
                     {event.registrationDeadline && (
                       <div className="glass rounded-xl p-4">
                         <p className="text-sm text-gray-400 mb-1">Registration Deadline</p>
-                        <p className="font-medium">{formatDate(event.registrationDeadline)}</p>
+                        <p className="font-medium">
+                          {formatDate(event.registrationDeadline)}
+                          <span className="text-sm text-gray-400 ml-2">
+                            {formatTime(event.registrationDeadline)}
+                          </span>
+                        </p>
                       </div>
                     )}
 
                     {/* Attendees (if organizer) */}
-                    {isOrganizer() && attendees.length > 0 && (
-                      <div className="glass rounded-xl p-6">
-                        <h3 className="text-lg font-semibold mb-4">Attendees ({attendees.length})</h3>
-                        <div className="space-y-2 max-h-48 overflow-y-auto">
-                          {attendees.map((attendee, index) => (
-                            <div key={index} className="flex items-center space-x-3">
-                              <div className="w-8 h-8 bg-gradient-to-r from-blue-500 to-purple-500 rounded-full flex items-center justify-center text-white text-sm font-semibold">
-                                {attendee.name[0]}
-                              </div>
-                              <div className="flex-1">
-                                <p className="text-sm font-medium">{attendee.name}</p>
-                                <p className="text-xs text-gray-400">{attendee.email}</p>
-                              </div>
-                            </div>
-                          ))}
+                    {isOrganizer() && (
+                      <div className="glass rounded-xl p-6 space-y-4">
+                        <div className="flex items-center justify-between">
+                          <h3 className="text-lg font-semibold">Attendees</h3>
+                          {attendees.stats && (
+                            <span className="text-sm text-gray-400">
+                              {attendees.stats.totalConfirmed} confirmed
+                              {attendees.stats.totalWaitlist > 0 && ` · ${attendees.stats.totalWaitlist} waitlist`}
+                            </span>
+                          )}
                         </div>
+
+                        {attendeesLoading ? (
+                          <div className="flex items-center justify-center py-6 text-gray-400 text-sm">
+                            Loading attendees...
+                          </div>
+                        ) : (
+                          <>
+                            {attendees.confirmed.length === 0 && attendees.waitlist.length === 0 ? (
+                              <p className="text-sm text-gray-400">No attendees yet.</p>
+                            ) : (
+                              <div className="space-y-4 max-h-56 overflow-y-auto pr-1">
+                                {attendees.confirmed.length > 0 && (
+                                  <div>
+                                    <h4 className="text-sm font-semibold text-green-400 mb-2 flex items-center space-x-2">
+                                      <FiCheckCircle className="w-4 h-4" />
+                                      <span>Confirmed ({attendees.confirmed.length})</span>
+                                    </h4>
+                                    <div className="space-y-2">
+                                      {attendees.confirmed.map((attendee, index) => (
+                                        <div key={`confirmed-${index}`} className="flex items-center space-x-3">
+                                          <div className="w-8 h-8 bg-gradient-to-r from-green-500 to-emerald-500 rounded-full flex items-center justify-center text-white text-sm font-semibold">
+                                            {attendee.name?.charAt(0) || '?'}
+                                          </div>
+                                          <div className="flex-1">
+                                            <p className="text-sm font-medium">{attendee.name}</p>
+                                            <p className="text-xs text-gray-400">{attendee.email}</p>
+                                          </div>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+
+                                {attendees.waitlist.length > 0 && (
+                                  <div>
+                                    <h4 className="text-sm font-semibold text-yellow-400 mb-2 flex items-center space-x-2">
+                                      <FiClock className="w-4 h-4" />
+                                      <span>Waitlist ({attendees.waitlist.length})</span>
+                                    </h4>
+                                    <div className="space-y-2">
+                                      {attendees.waitlist.map((attendee, index) => (
+                                        <div key={`waitlist-${index}`} className="flex items-center space-x-3">
+                                          <div className="w-8 h-8 bg-gradient-to-r from-yellow-500 to-amber-500 rounded-full flex items-center justify-center text-white text-sm font-semibold">
+                                            {attendee.name?.charAt(0) || '?'}
+                                          </div>
+                                          <div className="flex-1">
+                                            <p className="text-sm font-medium">{attendee.name}</p>
+                                            <p className="text-xs text-gray-400">{attendee.email}</p>
+                                          </div>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </>
+                        )}
                       </div>
                     )}
                   </div>
@@ -441,6 +625,16 @@ const EventDetailsModal = ({ eventId, isOpen, onClose, onEventUpdated }) => {
           )}
         </div>
       </div>
+
+      {/* Edit Event Modal */}
+      {event && (
+        <CreateEventModal
+          isOpen={showEditModal}
+          onClose={() => setShowEditModal(false)}
+          onEventCreated={handleEventUpdated}
+          event={event}
+        />
+      )}
     </div>
   )
 }

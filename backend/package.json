@@ -7,9 +7,19 @@
   "scripts": {
     "dev": "nodemon src/app.js",
     "start": "node src/app.js",
+    "start:cluster": "ENABLE_CLUSTERING=true node src/app.js",
+    "start:production": "NODE_ENV=production ENABLE_CLUSTERING=true ENABLE_REDIS=true node src/app.js",
+    "debug": "node src/debug-start.js",
+    "debug:upload": "node debug-server.js",
     "test": "node --test",
     "lint": "eslint src/",
-    "lint:fix": "eslint src/ --fix"
+    "lint:fix": "eslint src/ --fix",
+    "load-test:basic": "artillery run load-tests/basic-api-test.yml",
+    "load-test:stress": "artillery run load-tests/stress-test.yml",
+    "load-test:spike": "artillery run load-tests/spike-test.yml",
+    "load-test:all": "npm run load-test:basic && npm run load-test:stress && npm run load-test:spike",
+    "performance:monitor": "curl -s http://localhost:5001/api/performance/stats | jq",
+    "performance:capacity": "curl -s http://localhost:5001/api/performance/capacity/1000 | jq"
   },
   "keywords": [
     "tcetian",
@@ -22,17 +32,25 @@
   "license": "MIT",
   "dependencies": {
     "bcryptjs": "^2.4.3",
+    "compression": "^1.8.1",
     "cors": "^2.8.5",
     "dotenv": "^16.3.1",
     "express": "^4.19.2",
     "express-rate-limit": "^7.1.5",
     "express-validator": "^7.0.1",
+    "form-data": "^4.0.4",
     "helmet": "^7.1.0",
+    "ioredis": "^5.8.0",
     "jsonwebtoken": "^9.0.2",
+    "lru-cache": "^11.2.2",
     "mongoose": "^8.0.3",
     "morgan": "^1.10.0",
     "multer": "^1.4.4",
-    "nodemailer": "^6.9.7",
+    "node-cron": "^4.2.1",
+    "node-fetch": "^3.3.2",
+    "nodemailer": "^6.10.1",
+    "pm2": "^6.0.13",
+    "redis": "^5.8.3",
     "socket.io": "^4.8.1"
   },
   "devDependencies": {

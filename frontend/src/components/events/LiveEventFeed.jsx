@@ -22,29 +22,30 @@ const LiveEventFeed = ({ onEventClick, maxEvents = 5 }) => {
       
       // Listen for new events
       const unsubscribeNewEvent = onNewEvent((eventData) => {
-        console.log('New event received:', eventData)
+        const normalizedEvent = {
+          ...eventData
+        }
         
         setLiveEvents(prev => {
           // Add new event to the top and limit to maxEvents
           const newEvents = [
             {
-              ...eventData,
+              ...normalizedEvent,
               isNew: true,
               createdAt: new Date().toISOString()
             },
-            ...prev.filter(e => e.eventId !== eventData.eventId)
+            ...prev.filter(e => e.eventId !== normalizedEvent.eventId)
           ].slice(0, maxEvents)
           
           return newEvents
         })
         
         // Show toast notification
-        showToast(`New ${eventData.category} event: ${eventData.title}`, 'info')
+        showToast(`New ${normalizedEvent.category} event: ${normalizedEvent.title}`, 'info')
       })
 
       // Listen for event updates
       const unsubscribeEventUpdate = onEventUpdate((updateData) => {
-        console.log('Event update received:', updateData)
         
         setLiveEvents(prev =>
           prev.map(event =>
@@ -85,7 +86,6 @@ const LiveEventFeed = ({ onEventClick, maxEvents = 5 }) => {
             name: event.organizer?.clubName || event.organizer?.name,
             id: event.organizer?._id
           },
-          imageUrl: event.imageUrl,
           createdAt: event.createdAt
         }))
         
@@ -189,17 +189,9 @@ const LiveEventFeed = ({ onEventClick, maxEvents = 5 }) => {
               }`}
             >
               <div className="flex items-start space-x-3">
-                {event.imageUrl ? (
-                  <img 
-                    src={event.imageUrl} 
-                    alt={event.title}
-                    className="w-12 h-12 rounded-lg object-cover flex-shrink-0"
-                  />
-                ) : (
-                  <div className="w-12 h-12 rounded-lg bg-gradient-to-r from-purple-500 to-pink-500 flex items-center justify-center flex-shrink-0">
-                    <FiCalendar className="w-6 h-6 text-white" />
-                  </div>
-                )}
+                <div className="w-12 h-12 rounded-lg bg-gradient-to-r from-purple-500 to-pink-500 flex items-center justify-center flex-shrink-0">
+                  <FiCalendar className="w-6 h-6 text-white" />
+                </div>
                 
                 <div className="flex-1 min-w-0">
                   <div className="flex items-start justify-between">

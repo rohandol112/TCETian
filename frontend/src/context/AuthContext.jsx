@@ -130,12 +130,19 @@ export const AuthProvider = ({ children }) => {
     dispatch({ type: 'CLEAR_ERROR' })
   }
 
+  // Update user data
+  const updateUser = (userData) => {
+    dispatch({ type: 'LOAD_USER', payload: userData })
+  }
+
   const value = {
     ...state,
     login,
     register,
     logout,
-    clearError
+    clearError,
+    loadUser,
+    updateUser
   }
 
   return (

@@ -1,0 +1,58 @@
+config:
+  target: 'http://localhost:5001'
+  phases:
+    - duration: 30
+      arrivalRate: 10
+      name: "Warm up"
+    - duration: 60
+      arrivalRate: 50
+      name: "Ramp up"
+    - duration: 120
+      arrivalRate: 100
+      name: "Stress test"
+    - duration: 60
+      arrivalRate: 150
+      name: "Peak stress"
+  defaults:
+    headers:
+      Content-Type: 'application/json'
+
+scenarios:
+  - name: "High Volume User Activity"
+    weight: 60
+    flow:
+      - get:
+          url: "/api/posts?page={{ $randomInt(1, 10) }}&limit=20"
+      - get:
+          url: "/api/events"
+      - get:
+          url: "/health"
+
+  - name: "Authenticated User Actions"
+    weight: 40
+    flow:
+      - post:
+          url: "/api/auth/login"
+          json:
+            email: "test{{ $randomInt(1, 100) }}@tcet.com"
+            password: "password123"
+          capture:
+            - json: "$.token"
+              as: "authToken"
+      - post:
+          url: "/api/posts"
+          headers:
+            Authorization: "Bearer {{ authToken }}"
+          json:
+            content: "Stress test post {{ $randomString() }}"
+            type: "{{ $randomItem(['general', 'academic', 'social']) }}"
+      - get:
+          url: "/api/posts?page=1&limit=5"
+          headers:
+            Authorization: "Bearer {{ authToken }}"
+
+# Stress test assertions - more lenient
+ensure:
+  p95: 1000   # Allow higher response times under stress
+  p99: 2000
+  maxErrorRate: 5  # Allow up to 5% error rate under stress

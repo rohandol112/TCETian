@@ -3,8 +3,10 @@ import apiService from './api.js'
 export const eventService = {
   // Get all events with filtering
   async getEvents(params = {}) {
-    const queryString = new URLSearchParams(params).toString()
-    const endpoint = queryString ? `/events?${queryString}` : '/events'
+    // Add cache-busting timestamp to prevent stale data
+    const cacheParams = { ...params, _t: Date.now() }
+    const queryString = new URLSearchParams(cacheParams).toString()
+    const endpoint = queryString ? `/events?${queryString}` : `/events?_t=${Date.now()}`
     return await apiService.get(endpoint)
   },
 
@@ -15,12 +17,26 @@ export const eventService = {
 
   // Create new event (Club only)
   async createEvent(eventData) {
-    return await apiService.post('/events', eventData)
+    // Clear cache before creating new event
+    apiService.clearCache()
+    const result = await apiService.post('/events', eventData)
+    // Clear cache after successful creation to ensure fresh data
+    if (result.success) {
+      apiService.clearCache()
+    }
+    return result
   },
 
   // Update event (Club only)
   async updateEvent(eventId, eventData) {
-    return await apiService.put(`/events/${eventId}`, eventData)
+    // Clear cache before updating event
+    apiService.clearCache()
+    const result = await apiService.put(`/events/${eventId}`, eventData)
+    // Clear cache after successful update to ensure fresh data
+    if (result.success) {
+      apiService.clearCache()
+    }
+    return result
   },
 
   // Delete event (Club only)
@@ -44,7 +60,19 @@ export const eventService = {
   },
 
   // Get dashboard stats (Club only)
-  async getDashboardStats() {
-    return await apiService.get('/events/dashboard/stats')
+  async getDashboardStats(forceRefresh = false) {
+    // Always include timestamp to prevent caching issues
+    const endpoint = `/events/dashboard/stats?_t=${Date.now()}`
+    return await apiService.get(endpoint)
+  },
+
+  // Share event
+  async shareEvent(eventId) {
+    return await apiService.post(`/events/${eventId}/share`)
+  },
+
+  // Get event share info
+  async getEventShareInfo(eventId) {
+    return await apiService.get(`/events/${eventId}/share-info`)
   }
 }

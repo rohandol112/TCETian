@@ -193,7 +193,7 @@ class SocketService {
   // Listen for new events
   onNewEvent(callback) {
     if (this.socket) {
-      this.socket.on('new_event_created', callback)
+      this.socket.on('new_event', callback)
     }
   }
 
@@ -207,7 +207,7 @@ class SocketService {
   // Listen for RSVP updates
   onRSVPUpdate(callback) {
     if (this.socket) {
-      this.socket.on('rsvp_update', callback)
+      this.socket.on('rsvp_updated', callback)
     }
   }
 

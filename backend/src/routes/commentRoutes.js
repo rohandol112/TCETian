@@ -13,10 +13,10 @@ const router = express.Router()
 // Public routes
 router.get('/:postId', optionalAuth, getComments)
 
-// Student-only routes
-router.post('/', authenticate, authorize('student'), createComment)
-router.put('/:id', authenticate, authorize('student'), updateComment)
-router.delete('/:id', authenticate, authorize('student'), deleteComment)
-router.post('/:id/vote', authenticate, authorize('student'), voteComment)
+// Authenticated user routes (students and clubs can comment)
+router.post('/', authenticate, authorize('student', 'club'), createComment)
+router.put('/:id', authenticate, authorize('student', 'club'), updateComment)
+router.delete('/:id', authenticate, authorize('student', 'club'), deleteComment)
+router.post('/:id/vote', authenticate, authorize('student', 'club'), voteComment)
 
 export default router

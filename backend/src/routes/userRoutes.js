@@ -43,21 +43,7 @@ const upload = multer({
   }
 })
 
-// Profile routes (authenticated)
-router.get('/profile', authenticate, getProfile)
-router.put('/profile', authenticate, updateProfile)
-router.post('/profile/picture', authenticate, upload.single('profilePicture'), updateProfilePicture)
-router.put('/profile/password', authenticate, changePassword)
-router.get('/profile/saved-posts', authenticate, getSavedPosts)
-
-// Post interaction routes
-router.post('/posts/:postId/save', authenticate, toggleSavePost)
-
-// Public user routes
-router.get('/:id', optionalAuth, getUserById)
-router.get('/:id/posts', optionalAuth, getUserPosts)
-
-// @desc    Get all clubs
+// @desc    Get all clubs (MUST be before /:id to avoid conflicts)
 // @route   GET /api/users/clubs
 // @access  Public
 router.get('/clubs', async (req, res) => {
@@ -81,5 +67,19 @@ router.get('/clubs', async (req, res) => {
     })
   }
 })
+
+// Profile routes (authenticated)
+router.get('/profile', authenticate, getProfile)
+router.put('/profile', authenticate, updateProfile)
+router.post('/profile/picture', authenticate, upload.single('profilePicture'), updateProfilePicture)
+router.put('/profile/password', authenticate, changePassword)
+router.get('/profile/saved-posts', authenticate, getSavedPosts)
+
+// Post interaction routes
+router.post('/posts/:postId/save', authenticate, toggleSavePost)
+
+// Public user routes (/:id MUST be last)
+router.get('/:id', optionalAuth, getUserById)
+router.get('/:id/posts', optionalAuth, getUserPosts)
 
 export default router

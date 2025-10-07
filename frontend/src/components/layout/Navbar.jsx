@@ -40,9 +40,6 @@ const Navbar = () => {
     { name: 'Events', path: '/events', icon: FiCalendar },
     { name: 'Social', path: '/social', icon: FiMessageCircle },
     ...(isAuthenticated ? [
-      ...(user?.role === 'club' ? [
-        { name: 'Dashboard', path: '/dashboard', icon: FiGrid },
-      ] : []),
       { name: 'Profile', path: '/profile', icon: FiUser },
     ] : [])
   ]

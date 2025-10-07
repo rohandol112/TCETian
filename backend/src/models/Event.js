@@ -38,6 +38,8 @@ const eventSchema = new mongoose.Schema({
     required: [true, 'Event date is required'],
     validate: {
       validator: function(date) {
+        // Skip validation for existing documents (editing)
+        if (!this.isNew) return true
         return date > new Date()
       },
       message: 'Event date must be in the future'
@@ -71,9 +73,16 @@ const eventSchema = new mongoose.Schema({
     required: [true, 'Registration deadline is required'],
     validate: {
       validator: function(date) {
-        return date > new Date() && date <= this.eventDate
+        // Skip validation for existing documents (editing/fetching)
+        if (!this.isNew) return true
+        
+        // For new events, check if before event date (allow same day registration)
+        if (!this.eventDate) return true // Will be validated in controller
+        
+        // Registration deadline should be before event date
+        return date < this.eventDate
       },
-      message: 'Registration deadline must be before event date and in the future'
+      message: 'Registration deadline must be before the event start time'
     }
   },
   tags: [{
@@ -81,10 +90,6 @@ const eventSchema = new mongoose.Schema({
     trim: true,
     maxlength: [50, 'Tag cannot exceed 50 characters']
   }],
-  imageUrl: {
-    type: String,
-    default: ''
-  },
   requirements: [{
     type: String,
     trim: true,
@@ -145,6 +150,10 @@ const eventSchema = new mongoose.Schema({
     type: Number,
     default: 0
   },
+  shareCount: {
+    type: Number,
+    default: 0
+  },
   // Featured event
   featured: {
     type: Boolean,
@@ -156,12 +165,17 @@ const eventSchema = new mongoose.Schema({
 
 // Virtual for current RSVP count
 eventSchema.virtual('currentRSVP').get(function() {
-  return this.rsvpUsers.filter(rsvp => rsvp.status === 'confirmed').length
+  if (!this.rsvpUsers || !Array.isArray(this.rsvpUsers)) {
+    return 0
+  }
+  return this.rsvpUsers.filter(rsvp => rsvp && rsvp.status === 'confirmed').length
 })
 
 // Virtual for available spots
 eventSchema.virtual('availableSpots').get(function() {
-  return this.maxRSVP - this.currentRSVP
+  const maxRSVP = this.maxRSVP || 0
+  const currentRSVP = this.currentRSVP || 0
+  return Math.max(0, maxRSVP - currentRSVP)
 })
 
 // Virtual for is full
@@ -178,19 +192,37 @@ eventSchema.index({ tags: 1 })
 // Ensure virtuals are included in JSON
 eventSchema.set('toJSON', { virtuals: true })
 
-// Method to check if user has RSVP'd
+// Method to check if user has RSVP'd (any active status)
 eventSchema.methods.hasUserRSVP = function(userId) {
-  return this.rsvpUsers.some(rsvp => 
-    rsvp.user.toString() === userId.toString() && rsvp.status === 'confirmed'
-  )
+  if (!this.rsvpUsers) return false
+  return this.rsvpUsers.some(rsvp => {
+    const rsvpUserId = rsvp.user._id || rsvp.user
+    return rsvpUserId?.toString() === userId?.toString() && 
+           (rsvp.status === 'confirmed' || rsvp.status === 'waitlist')
+  })
+}
+
+// Method to get user's RSVP status
+eventSchema.methods.getUserRSVPStatus = function(userId) {
+  if (!this.rsvpUsers) return null
+  const rsvp = this.rsvpUsers.find(rsvp => {
+    const rsvpUserId = rsvp.user._id || rsvp.user
+    return rsvpUserId?.toString() === userId?.toString() &&
+           (rsvp.status === 'confirmed' || rsvp.status === 'waitlist')
+  })
+  
+  return rsvp ? rsvp.status : null
 }
 
 // Method to add RSVP
 eventSchema.methods.addRSVP = function(userId) {
+  if (!this.rsvpUsers) this.rsvpUsers = []
+  
   // Check if user already RSVP'd
-  const existingRSVP = this.rsvpUsers.find(rsvp => 
-    rsvp.user.toString() === userId.toString()
-  )
+  const existingRSVP = this.rsvpUsers.find(rsvp => {
+    const rsvpUserId = rsvp.user._id || rsvp.user
+    return rsvpUserId?.toString() === userId?.toString()
+  })
   
   if (existingRSVP) {
     if (existingRSVP.status === 'cancelled') {
@@ -212,9 +244,12 @@ eventSchema.methods.addRSVP = function(userId) {
 
 // Method to cancel RSVP
 eventSchema.methods.cancelRSVP = function(userId) {
-  const rsvp = this.rsvpUsers.find(rsvp => 
-    rsvp.user.toString() === userId.toString()
-  )
+  if (!this.rsvpUsers) return null
+  
+  const rsvp = this.rsvpUsers.find(rsvp => {
+    const rsvpUserId = rsvp.user._id || rsvp.user
+    return rsvpUserId?.toString() === userId?.toString()
+  })
   
   if (rsvp) {
     rsvp.status = 'cancelled'

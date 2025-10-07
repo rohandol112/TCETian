@@ -32,6 +32,10 @@ export const SocketProvider = ({ children }) => {
 
       // Join social feed by default
       socketService.joinSocialFeed()
+      
+      // Join events feed for real-time event updates
+      socketService.joinEventsFeed()
+      console.log('🔌 Joined events feed for real-time updates')
 
       // Update user status to online
       socketService.updateUserStatus('online')
@@ -39,6 +43,7 @@ export const SocketProvider = ({ children }) => {
       return () => {
         socketService.updateUserStatus('offline')
         socketService.leaveSocialFeed()
+        socketService.leaveEventsFeed()
         socketService.disconnect()
         setIsConnected(false)
       }
@@ -59,13 +64,11 @@ export const SocketProvider = ({ children }) => {
     // Listen for user status updates
     socketService.onUserStatusUpdate((update) => {
       // Handle online/offline status updates
-      console.log('User status update:', update)
     })
 
     // Listen for typing indicators
     socketService.onUserTypingComment((data) => {
       // Handle typing indicators in comments
-      console.log('User typing:', data)
     })
   }
 
@@ -119,7 +122,7 @@ export const SocketProvider = ({ children }) => {
   // Event-related listeners
   const onNewEvent = (callback) => {
     socketService.onNewEvent(callback)
-    return () => socketService.off('new_event_created', callback)
+    return () => socketService.off('new_event', callback)
   }
 
   const onEventUpdate = (callback) => {
@@ -129,7 +132,7 @@ export const SocketProvider = ({ children }) => {
 
   const onRSVPUpdate = (callback) => {
     socketService.onRSVPUpdate(callback)
-    return () => socketService.off('rsvp_update', callback)
+    return () => socketService.off('rsvp_updated', callback)
   }
 
   // Profile update listeners

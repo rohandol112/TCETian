@@ -1,7 +1,10 @@
 import Comment from '../models/Comment.js'
 import Post from '../models/Post.js'
+import User from '../models/User.js'
 import UserActivity from '../models/UserActivity.js'
 import socketService from '../services/socketService.js'
+import EmailService from '../services/emailService.js'
+const emailService = new EmailService()
 
 // @desc    Get comments for a post
 // @route   GET /api/comments/:postId
@@ -268,6 +271,82 @@ export const createComment = async (req, res) => {
     socketService.emitUserPostInteraction(req.user.id, postId, 'commented', {
       commentId: comment._id,
       isReply: !!parentCommentId
+    })
+
+    // Send email notifications and real-time socket notifications (async, don't block response)
+    setImmediate(async () => {
+      try {
+        let emailSent = false
+        
+        if (parentCommentId) {
+          // This is a reply - notify the parent comment author
+          const parentComment = await Comment.findById(parentCommentId).populate('author', 'email name')
+          
+          // Don't notify if replying to own comment
+          if (parentComment && parentComment.author._id.toString() !== req.user.id) {
+            await emailService.sendReplyNotification(
+              parentComment.author.email,
+              parentComment.author.name,
+              {
+                _id: post._id,
+                title: post.title,
+                content: post.content
+              },
+              {
+                authorName: req.user.name,
+                content: comment.content,
+                createdAt: comment.createdAt
+              }
+            )
+            emailSent = true
+            console.log(`📧 Reply notification sent to ${parentComment.author.email}`)
+          }
+        } else {
+          // This is a direct comment - notify the post author
+          const postAuthor = await User.findById(post.author).select('email name')
+          
+          // Don't notify if commenting on own post
+          if (postAuthor && post.author.toString() !== req.user.id) {
+            await emailService.sendCommentNotification(
+              postAuthor.email,
+              postAuthor.name,
+              {
+                _id: post._id,
+                title: post.title,
+                content: post.content
+              },
+              {
+                authorName: req.user.name,
+                content: comment.content,
+                createdAt: comment.createdAt
+              }
+            )
+            emailSent = true
+            console.log(`📧 Comment notification sent to ${postAuthor.email}`)
+          }
+        }
+
+        // Send enhanced socket notification with email status
+        socketService.notifyNewComment(postId, {
+          ...commentWithUserVote,
+          authorName: req.user.name,
+          authorAvatar: req.user.profilePicture,
+          postAuthorId: post.author.toString(),
+          authorId: req.user.id
+        }, emailSent)
+
+      } catch (emailError) {
+        console.error('❌ Failed to send comment/reply notification:', emailError)
+        
+        // Still send socket notification even if email fails
+        socketService.notifyNewComment(postId, {
+          ...commentWithUserVote,
+          authorName: req.user.name,
+          authorAvatar: req.user.profilePicture,
+          postAuthorId: post.author.toString(),
+          authorId: req.user.id
+        }, false)
+      }
     })
 
     res.status(201).json({

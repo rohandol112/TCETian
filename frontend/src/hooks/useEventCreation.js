@@ -1,235 +1,272 @@
-import { useState } from 'react'
-import { useToast } from '../context/ToastContext'
+import { useState, useCallback, useEffect } from 'react'
 import { useAuth } from '../context/AuthContext'
 import { useSocket } from '../context/SocketContext'
+import { useToast } from '../context/ToastContext'
 import { eventService } from '../services/eventService'
+import { createEventUtils } from '../utils/eventUtils'
 
-export const useEventCreation = (onEventCreated) => {
-  const { showToast } = useToast()
+export const useEventCreation = (onEventCreated, initialEvent = null) => {
   const { user } = useAuth()
-  const { isConnected, socket } = useSocket()
+  const { socket, isConnected } = useSocket()
+  const { showToast } = useToast()
   
   const [formData, setFormData] = useState({
     title: '',
     description: '',
-    category: '',
+    category: 'academic',
     eventDate: '',
     eventTime: '',
     duration: 2,
     venue: '',
     capacity: 50,
     registrationDeadline: '',
+    registrationDeadlineTime: '',
     tags: '',
-    imageUrl: '',
-    imageInputType: 'url',
-    posterFile: null,
     requirements: '',
     contactEmail: user?.email || '',
     contactPhone: ''
   })
-  
-  const [loading, setLoading] = useState(false)
+
   const [errors, setErrors] = useState({})
+  const [loading, setLoading] = useState(false)
 
   const categories = [
     'Technical', 'Cultural', 'Sports', 'Workshop', 
     'Seminar', 'Competition', 'Social', 'Academic', 'Other'
   ]
 
-  const validateForm = () => {
-    const newErrors = {}
-    
-    if (!formData.title.trim()) newErrors.title = 'Event title is required'
-    if (!formData.description.trim()) newErrors.description = 'Event description is required'
-    if (!formData.category) newErrors.category = 'Event category is required'
-    if (!formData.eventDate) newErrors.eventDate = 'Event date is required'
-    if (!formData.eventTime) newErrors.eventTime = 'Event time is required'
-    if (!formData.venue.trim()) newErrors.venue = 'Event venue is required'
-    if (formData.capacity < 1) newErrors.capacity = 'Capacity must be at least 1'
-    
-    // Check if event date is in the future
-    const eventDateTime = new Date(`${formData.eventDate}T${formData.eventTime}`)
-    if (eventDateTime <= new Date()) {
-      newErrors.eventDate = 'Event must be scheduled for a future date and time'
+  // Cache-busting helper
+  const clearCache = useCallback(() => {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      const keys = Object.keys(window.localStorage)
+      keys.forEach(key => {
+        if (key.includes('event') || key.includes('Event')) {
+          window.localStorage.removeItem(key)
+        }
+      })
     }
+    return new Promise(resolve => setTimeout(resolve, 100))
+  }, [])
+
+  // Form validation using utility
+  const validateForm = useCallback((data = formData) => {
+    console.log('🔍 Validating form data:', data)
     
-    // Check registration deadline
-    if (formData.registrationDeadline) {
-      const deadlineDate = new Date(formData.registrationDeadline)
-      if (deadlineDate >= eventDateTime) {
-        newErrors.registrationDeadline = 'Registration deadline must be before the event date'
-      }
-    }
+    const result = createEventUtils.validateEventData(data, !!initialEvent)
+    
+    console.log('✅ Validation result:', result)
+    return result
+  }, [formData, initialEvent])
 
-    setErrors(newErrors)
-    return Object.keys(newErrors).length === 0
-  }
+  // Handle form submission
+  const createEvent = useCallback(async () => {
+    if (loading) return false
 
-  const createEvent = async (additionalData = {}) => {
-    if (!validateForm()) {
-      showToast('Please fix the form errors', 'error')
-      return false
-    }
+    console.log('🚀 Starting form submission...', formData)
+    
+    // Clear cache before validation
+    await clearCache()
 
-    if (user?.role !== 'club') {
-      showToast('Only clubs can create events', 'error')
+    // Validate form
+    const { isValid, errors: validationErrors } = validateForm()
+    
+    if (!isValid) {
+      console.error('❌ Form validation failed:', validationErrors)
+      setErrors(validationErrors)
+      showToast('Please fix the form errors before submitting', 'error')
       return false
     }
 
     setLoading(true)
-    
+    setErrors({})
+
     try {
-      // Create FormData for file upload support
-      const submitData = new FormData()
-      
-      // Add all form fields
-      submitData.append('title', formData.title)
-      submitData.append('description', formData.description)
-      submitData.append('category', formData.category)
-      submitData.append('eventDate', formData.eventDate)
-      submitData.append('eventTime', formData.eventTime)
-      submitData.append('duration', formData.duration)
-      submitData.append('venue', formData.venue)
-      submitData.append('capacity', formData.capacity)
-      submitData.append('registrationDeadline', formData.registrationDeadline)
-      submitData.append('contactEmail', formData.contactEmail || user.email)
-      submitData.append('contactPhone', formData.contactPhone)
-      
-      // Handle tags and requirements
-      const tags = formData.tags.split(',').map(tag => tag.trim()).filter(tag => tag)
-      const requirements = formData.requirements.split(',').map(req => req.trim()).filter(req => req)
-      submitData.append('tags', JSON.stringify(tags))
-      submitData.append('requirements', JSON.stringify(requirements))
-      
-      // Handle image
-      if (formData.imageInputType === 'upload' && formData.posterFile) {
-        submitData.append('poster', formData.posterFile)
-      } else if (formData.imageInputType === 'url' && formData.imageUrl) {
-        submitData.append('imageUrl', formData.imageUrl)
+      // Prepare submission data using utility
+      const submissionData = createEventUtils.prepareSubmissionData(formData, user?.id)
+
+      console.log('📤 Submitting event data:', submissionData)
+
+      let result
+      if (initialEvent?._id) {
+        // Update existing event
+        result = await eventService.updateEvent(initialEvent._id, submissionData)
+        showToast('Event updated successfully!', 'success')
+      } else {
+        // Create new event
+        result = await eventService.createEvent(submissionData)
+        showToast('Event created successfully!', 'success')
       }
 
-      // Add additional data
-      Object.keys(additionalData).forEach(key => {
-        submitData.append(key, additionalData[key])
-      })
+      console.log('✅ Event submission successful:', result)
 
-      console.log('Creating event with WebSocket connection:', isConnected)
+      // Emit socket event for real-time updates
+      if (socket && result && result.success) {
+        const eventData = result.data?.event || result.data
+        const eventType = initialEvent?._id ? 'event_updated' : 'broadcast_new_event'
+        socket.emit(eventType, eventData)
+      }
 
-      // Create event via API
-      const response = await eventService.createEvent(submitData)
-      
-      if (response.success) {
-        const newEvent = response.data.event
-
-        // Real-time WebSocket broadcasting
-        if (isConnected && socket) {
-          console.log('Broadcasting new event via WebSocket:', newEvent._id)
-          
-          // Broadcast to all users in events feed
-          socket.emit('broadcast_new_event', {
-            eventId: newEvent._id,
-            title: newEvent.title,
-            category: newEvent.category,
-            organizer: {
-              name: user.clubName || user.name,
-              id: user.id
-            },
-            eventDate: newEvent.eventDate,
-            venue: newEvent.venue,
-            capacity: newEvent.capacity,
-            imageUrl: newEvent.imageUrl,
-            timestamp: new Date().toISOString()
-          })
-
-          // Join the new event room for real-time updates
-          socket.emit('join_event', newEvent._id)
-          
-          // Update analytics in real-time
-          socket.emit('update_analytics', {
-            type: 'event_created',
-            eventId: newEvent._id,
-            clubId: user.id
-          })
-        }
-
-        showToast('Event created successfully! 🎉', 'success')
-        
-        // Reset form
+      // Clear form on success
+      if (!initialEvent) {
         setFormData({
           title: '',
           description: '',
-          category: '',
+          category: 'academic',
           eventDate: '',
           eventTime: '',
           duration: 2,
           venue: '',
           capacity: 50,
           registrationDeadline: '',
+          registrationDeadlineTime: '',
           tags: '',
-          imageUrl: '',
           requirements: '',
           contactEmail: user?.email || '',
           contactPhone: ''
         })
-        setErrors({})
-        
-        // Call callback if provided
-        if (onEventCreated) {
-          onEventCreated(newEvent)
-        }
-        
-        return true
-      } else {
-        throw new Error(response.message || 'Failed to create event')
       }
+
+      setErrors({})
+
+      // Clear cache after successful submission
+      await clearCache()
+
+      if (onEventCreated) {
+        onEventCreated(result.data?.event || result.data)
+      }
+
+      return true
+
     } catch (error) {
-      console.error('Event creation error:', error)
-      showToast(error.message || 'Failed to create event', 'error')
+      console.error('❌ Event submission error:', error)
+      
+      const errorMessage = error.response?.data?.message || error.message || 'Failed to save event'
+      showToast(errorMessage, 'error')
+      
+      if (error.response?.data?.errors) {
+        setErrors(error.response.data.errors)
+      }
+      
       return false
     } finally {
       setLoading(false)
     }
-  }
+  }, [
+    formData, 
+    initialEvent, 
+    loading, 
+    validateForm, 
+    clearCache, 
+    socket, 
+    showToast,
+    user,
+    onEventCreated
+  ])
 
-  const updateField = (field, value) => {
-    setFormData(prev => ({
-      ...prev,
-      [field]: value
-    }))
+  // Update field helper
+  const updateField = useCallback((field, value) => {
+    setFormData(prev => ({ ...prev, [field]: value }))
     
     // Clear error when user starts typing
     if (errors[field]) {
-      setErrors(prev => ({
-        ...prev,
-        [field]: null
-      }))
+      setErrors(prev => {
+        const newErrors = { ...prev }
+        delete newErrors[field]
+        return newErrors
+      })
     }
-  }
+  }, [errors])
 
-  const resetForm = () => {
+  // Reset form
+  const resetForm = useCallback(() => {
     setFormData({
       title: '',
       description: '',
-      category: '',
+      category: 'academic',
       eventDate: '',
       eventTime: '',
       duration: 2,
       venue: '',
       capacity: 50,
       registrationDeadline: '',
+      registrationDeadlineTime: '',
       tags: '',
-      imageUrl: '',
       requirements: '',
       contactEmail: user?.email || '',
       contactPhone: ''
     })
     setErrors({})
-  }
+  }, [user])
+
+  // Load initial data for editing
+  useEffect(() => {
+    if (initialEvent) {
+      console.log('📥 Loading initial event data:', initialEvent)
+      console.log('🕐 Original eventDate from DB:', initialEvent.eventDate)
+      
+      // Format dates for form inputs (avoiding timezone issues)
+      let eventDate = ''
+      let eventTime = ''
+      
+      if (initialEvent.eventDate) {
+        const date = new Date(initialEvent.eventDate)
+        // Use local date components to avoid timezone shifts
+        const year = date.getFullYear()
+        const month = String(date.getMonth() + 1).padStart(2, '0')
+        const day = String(date.getDate()).padStart(2, '0')
+        eventDate = `${year}-${month}-${day}`
+        eventTime = `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
+        
+        console.log('🕐 Formatted eventDate:', { 
+          original: initialEvent.eventDate, 
+          parsed: date.toISOString(), 
+          formatted: eventDate, 
+          time: eventTime 
+        })
+      }
+      
+      let regDate = ''
+      let regTime = ''
+      
+      if (initialEvent.registrationDeadline) {
+        const date = new Date(initialEvent.registrationDeadline)
+        // Use local date components to avoid timezone shifts
+        const year = date.getFullYear()
+        const month = String(date.getMonth() + 1).padStart(2, '0')
+        const day = String(date.getDate()).padStart(2, '0')
+        regDate = `${year}-${month}-${day}`
+        regTime = `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
+      }
+      
+      setFormData({
+        title: initialEvent.title || '',
+        description: initialEvent.description || '',
+        category: initialEvent.category || 'academic',
+        eventDate,
+        eventTime,
+        duration: initialEvent.duration || 2,
+        venue: initialEvent.venue || '',
+        capacity: initialEvent.capacity || 50,
+        registrationDeadline: regDate,
+        registrationDeadlineTime: regTime,
+        contactEmail: initialEvent.contactEmail || user?.email || '',
+        contactPhone: initialEvent.contactPhone || '',
+        tags: Array.isArray(initialEvent.tags) ? initialEvent.tags.join(', ') : initialEvent.tags || '',
+        requirements: Array.isArray(initialEvent.requirements) ? initialEvent.requirements.join(', ') : initialEvent.requirements || ''
+      })
+    } else {
+      // Set default contact email for new events
+      setFormData(prev => ({
+        ...prev,
+        contactEmail: user?.email || ''
+      }))
+    }
+  }, [initialEvent, user])
 
   return {
     formData,
-    loading,
     errors,
+    loading,
     categories,
     isConnected,
     createEvent,

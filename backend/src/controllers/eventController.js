@@ -1,11 +1,55 @@
 import Event from '../models/Event.js'
 import User from '../models/User.js'
+import EmailService from '../services/emailService.js'
+const emailService = new EmailService()
+
+const parseDateTimeInput = (dateValue, timeValue, defaultTime = '00:00') => {
+  if (!dateValue) return null
+
+  try {
+    // If dateValue is already a full ISO string, just parse it
+    if (typeof dateValue === 'string' && dateValue.includes('T')) {
+      const parsed = new Date(dateValue)
+      return Number.isNaN(parsed.getTime()) ? null : parsed
+    }
+
+    // Otherwise combine date and time as local time
+    let datePart = dateValue
+    if (typeof dateValue !== 'string') {
+      datePart = new Date(dateValue).toISOString().split('T')[0]
+    } else if (dateValue.includes('T')) {
+      datePart = dateValue.split('T')[0]
+    }
+
+    const timePart = (timeValue && timeValue.trim()) || defaultTime
+    
+    // Parse as local timezone to avoid UTC conversion issues
+    const [year, month, day] = datePart.split('-').map(Number)
+    const [hours, minutes] = timePart.split(':').map(Number)
+    
+    const combined = new Date(year, month - 1, day, hours, minutes, 0, 0)
+    
+    console.log('📅 Date parsing:', {
+      input: { dateValue, timeValue },
+      parsed: { year, month: month - 1, day, hours, minutes },
+      result: combined.toISOString(),
+      local: combined.toLocaleString()
+    })
+    
+    return Number.isNaN(combined.getTime()) ? null : combined
+  } catch (error) {
+    console.error('Date parsing error:', error, 'Input:', { dateValue, timeValue })
+    return null
+  }
+}
 
 // @desc    Get all events (with filtering and pagination)
 // @route   GET /api/events
 // @access  Public
 export const getEvents = async (req, res) => {
   try {
+    // Get events with optional authentication
+    
     const {
       page = 1,
       limit = 10,
@@ -36,6 +80,8 @@ export const getEvents = async (req, res) => {
     
     if (upcoming === 'true') {
       filter.eventDate = { $gte: new Date() }
+    } else if (upcoming === 'false') {
+      filter.eventDate = { $lt: new Date() }
     }
     
     if (search) {
@@ -57,6 +103,29 @@ export const getEvents = async (req, res) => {
       .skip(skip)
       .limit(parseInt(limit))
 
+    // Convert to plain objects and add user's RSVP status for authenticated users
+    let eventsWithRsvpStatus = events.map(event => {
+      const eventObj = event.toObject({ virtuals: true })
+      
+      // Ensure RSVP counts are properly calculated
+      const confirmedRSVPs = event.rsvpUsers.filter(rsvp => rsvp.status === 'confirmed').length
+      const waitlistRSVPs = event.rsvpUsers.filter(rsvp => rsvp.status === 'waitlist').length
+      
+      eventObj.currentRSVP = confirmedRSVPs
+      eventObj.waitlistCount = waitlistRSVPs
+      eventObj.totalRSVP = confirmedRSVPs + waitlistRSVPs
+      eventObj.availableSpots = (event.maxRSVP || event.capacity) - confirmedRSVPs
+      eventObj.isFull = confirmedRSVPs >= (event.maxRSVP || event.capacity)
+      
+      if (req.user) {
+        const userId = req.user._id || req.user.id
+        const userRsvpStatus = event.getUserRSVPStatus(userId)
+        eventObj.userRsvpStatus = userRsvpStatus
+      }
+      
+      return eventObj
+    })
+
     // Get total count for pagination
     const total = await Event.countDocuments(filter)
     
@@ -68,7 +137,7 @@ export const getEvents = async (req, res) => {
     res.json({
       success: true,
       data: {
-        events,
+        events: eventsWithRsvpStatus,
         pagination: {
           currentPage: parseInt(page),
           totalPages,
@@ -93,6 +162,13 @@ export const getEvents = async (req, res) => {
 // @access  Public
 export const getEvent = async (req, res) => {
   try {
+    // Increment view count without triggering validation
+    await Event.findByIdAndUpdate(
+      req.params.id,
+      { $inc: { viewCount: 1 } },
+      { runValidators: false }
+    )
+
     const event = await Event.findById(req.params.id)
       .populate('organizer', 'name clubName email description verified profilePicture')
       .populate('rsvpUsers.user', 'name studentId year branch')
@@ -104,13 +180,27 @@ export const getEvent = async (req, res) => {
       })
     }
 
-    // Increment view count
-    event.viewCount += 1
-    await event.save()
+    // Convert to plain object and add user's RSVP status
+    const eventObj = event.toObject({ virtuals: true })
+    
+    // Ensure RSVP counts are properly calculated
+    const confirmedRSVPs = event.rsvpUsers.filter(rsvp => rsvp.status === 'confirmed').length
+    const waitlistRSVPs = event.rsvpUsers.filter(rsvp => rsvp.status === 'waitlist').length
+    
+    eventObj.currentRSVP = confirmedRSVPs
+    eventObj.waitlistCount = waitlistRSVPs
+    eventObj.totalRSVP = confirmedRSVPs + waitlistRSVPs
+    eventObj.availableSpots = (event.maxRSVP || event.capacity) - confirmedRSVPs
+    eventObj.isFull = confirmedRSVPs >= (event.maxRSVP || event.capacity)
+    
+    if (req.user) {
+      const userId = req.user._id || req.user.id
+      eventObj.userRsvpStatus = event.getUserRSVPStatus(userId)
+    }
 
     res.json({
       success: true,
-      data: { event }
+      data: { event: eventObj }
     })
   } catch (error) {
     console.error('Get event error:', error)
@@ -126,29 +216,38 @@ export const getEvent = async (req, res) => {
 // @access  Private (Club)
 export const createEvent = async (req, res) => {
   try {
-    console.log('Creating event:', { ...req.body, organizer: req.user.id })
-    
-    // Import image handler
-    const { imageHandler } = await import('../utils/imageHandler.js')
-    
-    let imageUrl = null
-    
-    // Handle image - either uploaded file or URL
-    if (req.file) {
-      // Process uploaded image
-      imageUrl = imageHandler.processUploadedImage(req.file)
-      console.log('Processed uploaded image:', imageUrl)
-    } else if (req.body.imageUrl && imageHandler.validateImageUrl(req.body.imageUrl)) {
-      // Use provided URL
-      imageUrl = req.body.imageUrl
-      console.log('Using provided image URL:', imageUrl)
-    }
+    console.log('🎯 Creating event for user:', req.user.id, 'Role:', req.user.role, 'ClubName:', req.user.clubName)
+    console.log('📝 Event data received:', { ...req.body, organizer: req.user.id })
     
     const eventData = {
       ...req.body,
-      organizer: req.user.id,
-      imageUrl
+      organizer: req.user.id
     }
+
+    eventData.tags = sanitizeArrayField(eventData.tags, {
+      maxLength: 50
+    })
+
+    eventData.requirements = sanitizeArrayField(eventData.requirements, {
+      maxLength: 200
+    })
+
+    const eventDateTime = parseDateTimeInput(req.body.eventDate, req.body.eventTime)
+    if (eventDateTime) {
+      eventData.eventDate = eventDateTime
+    }
+
+    const registrationDeadline = parseDateTimeInput(
+      req.body.registrationDeadline,
+      req.body.registrationDeadlineTime,
+      '23:59'
+    )
+
+    if (registrationDeadline) {
+      eventData.registrationDeadline = registrationDeadline
+    }
+
+    delete eventData.registrationDeadlineTime
 
     const event = await Event.create(eventData)
     
@@ -174,8 +273,7 @@ export const createEvent = async (req, res) => {
         name: event.organizer.clubName || event.organizer.name,
         id: event.organizer._id
       },
-      venue: event.venue,
-      imageUrl: event.imageUrl
+      venue: event.venue
     })
 
     // Send notification to users interested in this category
@@ -252,9 +350,42 @@ export const updateEvent = async (req, res) => {
       })
     }
 
+    const updates = { ...req.body }
+
+    const hasTagsField = Object.prototype.hasOwnProperty.call(updates, 'tags')
+    if (hasTagsField) {
+      updates.tags = sanitizeArrayField(updates.tags, {
+        maxLength: 50
+      })
+    }
+
+    const hasRequirementsField = Object.prototype.hasOwnProperty.call(updates, 'requirements')
+    if (hasRequirementsField) {
+      updates.requirements = sanitizeArrayField(updates.requirements, {
+        maxLength: 200
+      })
+    }
+
+    const eventDateTime = parseDateTimeInput(req.body.eventDate, req.body.eventTime)
+    if (eventDateTime) {
+      updates.eventDate = eventDateTime
+    }
+
+    const registrationDeadline = parseDateTimeInput(
+      req.body.registrationDeadline,
+      req.body.registrationDeadlineTime,
+      '23:59'
+    )
+
+    if (registrationDeadline) {
+      updates.registrationDeadline = registrationDeadline
+    }
+
+    delete updates.registrationDeadlineTime
+
     const updatedEvent = await Event.findByIdAndUpdate(
       req.params.id,
-      req.body,
+      updates,
       { new: true, runValidators: true }
     ).populate('organizer', 'name clubName email verified')
 
@@ -265,6 +396,17 @@ export const updateEvent = async (req, res) => {
     })
   } catch (error) {
     console.error('Update event error:', error)
+    
+    // Handle validation errors
+    if (error.name === 'ValidationError') {
+      const validationErrors = Object.values(error.errors).map(err => err.message)
+      return res.status(400).json({
+        success: false,
+        message: 'Validation failed',
+        errors: validationErrors
+      })
+    }
+    
     res.status(500).json({
       success: false,
       message: 'Server error updating event'
@@ -341,22 +483,37 @@ export const rsvpEvent = async (req, res) => {
     }
 
     // Check if event is published and not past registration deadline
+    console.log('📅 RSVP Validation:', {
+      eventId: req.params.id,
+      userId: req.user.id,
+      eventStatus: event.status,
+      registrationDeadline: event.registrationDeadline,
+      currentTime: new Date(),
+      hasUserRSVP: event.hasUserRSVP(req.user.id),
+      userRSVPStatus: event.getUserRSVPStatus(req.user.id)
+    })
+
     if (event.status !== 'published') {
+      console.log('❌ RSVP Failed: Event not published')
       return res.status(400).json({
         success: false,
         message: 'Event is not available for registration'
       })
     }
 
-    if (new Date() > event.registrationDeadline) {
+    if (event.registrationDeadline && new Date() > event.registrationDeadline) {
+      console.log('❌ RSVP Failed: Registration deadline passed')
       return res.status(400).json({
         success: false,
         message: 'Registration deadline has passed'
       })
     }
 
+    const userId = req.user._id || req.user.id
+    
     // Check if user already RSVP'd
-    if (event.hasUserRSVP(req.user.id)) {
+    if (event.hasUserRSVP(userId)) {
+      console.log('❌ RSVP Failed: User already RSVP\'d')
       return res.status(400).json({
         success: false,
         message: 'You have already RSVP\'d to this event'
@@ -364,20 +521,81 @@ export const rsvpEvent = async (req, res) => {
     }
 
     // Add RSVP
-    const rsvp = event.addRSVP(req.user.id)
+    const rsvp = event.addRSVP(userId)
     await event.save()
 
     // Add to user's RSVP events
     await User.findByIdAndUpdate(
-      req.user.id,
+      userId,
       { $push: { rsvpEvents: event._id } }
     )
+
+    // Send RSVP confirmation email and real-time notification
+    try {
+      await emailService.sendRSVPConfirmation(
+        req.user.email,
+        req.user.name,
+        {
+          title: event.title,
+          description: event.description,
+          eventDate: event.eventDate,
+          eventTime: event.eventTime,
+          venue: event.venue,
+          category: event.category
+        },
+        rsvp.status
+      )
+      
+      console.log(`📧 RSVP confirmation email sent to ${req.user.email}`)
+      
+      // Send real-time notification to user
+      const socketService = (await import('../services/socketService.js')).default
+      socketService.sendNotificationToUser(req.user.id, {
+        type: 'rsvp_confirmation',
+        title: 'RSVP Confirmed!',
+        message: `Your RSVP for "${event.title}" has been confirmed. Check your email for details.`,
+        eventId: event._id,
+        eventTitle: event.title,
+        status: rsvp.status,
+        timestamp: new Date()
+      })
+      
+      // Broadcast RSVP activity to event organizer
+      socketService.sendNotificationToUser(event.organizer.toString(), {
+        type: 'new_rsvp',
+        title: 'New RSVP',
+        message: `${req.user.name} just RSVP'd to your event "${event.title}"`,
+        eventId: event._id,
+        eventTitle: event.title,
+        userName: req.user.name,
+        userYear: req.user.year,
+        userBranch: req.user.branch,
+        rsvpStatus: rsvp.status,
+        currentRSVP: event.currentRSVP + 1,
+        timestamp: new Date()
+      })
+
+      // Broadcast RSVP update to all users viewing this event
+      socketService.broadcastRSVPUpdate(event._id, {
+        userId: req.user.id,
+        userName: req.user.name,
+        action: 'rsvp',
+        status: rsvp.status,
+        currentRSVP: event.currentRSVP + 1,
+        availableSpots: event.availableSpots - 1,
+        eventTitle: event.title
+      })
+      
+    } catch (emailError) {
+      console.error('❌ Failed to send RSVP confirmation email:', emailError)
+      // Don't fail the RSVP if email fails
+    }
 
     res.json({
       success: true,
       message: rsvp.status === 'waitlist' 
         ? 'Added to waitlist - you will be notified if a spot opens up'
-        : 'RSVP successful',
+        : 'RSVP successful! Check your email for confirmation.',
       data: { 
         rsvp,
         currentRSVP: event.currentRSVP,
@@ -407,8 +625,10 @@ export const cancelRSVP = async (req, res) => {
       })
     }
 
+    const userId = req.user._id || req.user.id
+    
     // Check if user has RSVP'd
-    if (!event.hasUserRSVP(req.user.id)) {
+    if (!event.hasUserRSVP(userId)) {
       return res.status(400).json({
         success: false,
         message: 'You have not RSVP\'d to this event'
@@ -416,14 +636,46 @@ export const cancelRSVP = async (req, res) => {
     }
 
     // Cancel RSVP
-    const cancelledRsvp = event.cancelRSVP(req.user.id)
+    const cancelledRsvp = event.cancelRSVP(userId)
     await event.save()
 
     // Remove from user's RSVP events
     await User.findByIdAndUpdate(
-      req.user.id,
+      userId,
       { $pull: { rsvpEvents: event._id } }
     )
+
+    // Send RSVP cancellation email
+    try {
+      await emailService.sendRSVPCancellation(
+        req.user.email,
+        req.user.name,
+        {
+          title: event.title,
+          description: event.description,
+          eventDate: event.eventDate,
+          eventTime: event.eventTime,
+          venue: event.venue,
+          category: event.category
+        }
+      )
+      console.log(`📧 RSVP cancellation email sent to ${req.user.email}`)
+    } catch (emailError) {
+      console.error('❌ Failed to send RSVP cancellation email:', emailError)
+      // Don't fail the cancellation if email fails
+    }
+
+    // Broadcast RSVP cancellation to all users viewing this event
+    const socketService = (await import('../services/socketService.js')).default
+    socketService.broadcastRSVPUpdate(event._id, {
+      userId: req.user.id,
+      userName: req.user.name,
+      action: 'cancel',
+      status: 'cancelled',
+      currentRSVP: event.currentRSVP,
+      availableSpots: event.availableSpots,
+      eventTitle: event.title
+    })
 
     res.json({
       success: true,
@@ -530,7 +782,9 @@ export const getDashboardStats = async (req, res) => {
     
     let totalRSVPs = 0
     eventsWithRSVPs.forEach(event => {
-      totalRSVPs += event.rsvpUsers.filter(rsvp => rsvp.status === 'confirmed').length
+      if (event.rsvpUsers && Array.isArray(event.rsvpUsers)) {
+        totalRSVPs += event.rsvpUsers.filter(rsvp => rsvp && rsvp.status === 'confirmed').length
+      }
     })
 
     // Get recent events
@@ -558,4 +812,130 @@ export const getDashboardStats = async (req, res) => {
       message: 'Server error fetching dashboard stats'
     })
   }
+}
+
+// @desc    Share event (track share count)
+// @route   POST /api/events/:id/share
+// @access  Public
+export const shareEvent = async (req, res) => {
+  try {
+    const event = await Event.findById(req.params.id)
+
+    if (!event) {
+      return res.status(404).json({
+        success: false,
+        message: 'Event not found'
+      })
+    }
+
+    // Increment share count
+    event.shareCount = (event.shareCount || 0) + 1
+    await event.save()
+
+    // Emit socket event for real-time update
+    const io = req.app.get('io')
+    if (io) {
+      io.emit('event:shared', {
+        eventId: event._id,
+        shareCount: event.shareCount
+      })
+    }
+
+    res.json({
+      success: true,
+      data: {
+        shareCount: event.shareCount,
+        shareUrl: `${process.env.FRONTEND_URL}/events/${event._id}`
+      }
+    })
+  } catch (error) {
+    console.error('Share event error:', error)
+    res.status(500).json({
+      success: false,
+      message: 'Server error sharing event'
+    })
+  }
+}
+
+// @desc    Get event share info
+// @route   GET /api/events/:id/share-info
+// @access  Public
+export const getEventShareInfo = async (req, res) => {
+  try {
+    const event = await Event.findById(req.params.id)
+      .select('title description poster eventDate venue shareCount')
+      .populate('organizer', 'name profilePicture')
+
+    if (!event) {
+      return res.status(404).json({
+        success: false,
+        message: 'Event not found'
+      })
+    }
+
+    res.json({
+      success: true,
+      data: {
+        title: event.title,
+        description: event.description,
+        poster: event.poster,
+        eventDate: event.eventDate,
+        venue: event.venue,
+        organizer: event.organizer?.name || 'TCETian',
+        shareCount: event.shareCount || 0,
+        shareUrl: `${process.env.FRONTEND_URL}/events/${event._id}`,
+        imageUrl: event.poster ? `${process.env.BACKEND_URL}${event.poster}` : null
+      }
+    })
+  } catch (error) {
+    console.error('Get share info error:', error)
+    res.status(500).json({
+      success: false,
+      message: 'Server error'
+    })
+  }
+}
+
+const sanitizeArrayField = (rawValue, {
+  fallbackSplitter = ',',
+  maxLength = Infinity,
+  trim = true
+} = {}) => {
+  if (!rawValue) return []
+
+  const attemptParse = (value) => {
+    if (typeof value !== 'string') return value
+    let current = value
+    try {
+      let parsed = JSON.parse(current)
+      while (typeof parsed === 'string' && parsed.startsWith('[')) {
+        current = parsed
+        parsed = JSON.parse(parsed)
+      }
+      return parsed
+    } catch {
+      return current
+    }
+  }
+
+  const ensureArray = (value) => {
+    if (Array.isArray(value)) return value
+    if (typeof value === 'string') {
+      return value
+        .split(fallbackSplitter)
+        .map(part => part.trim())
+        .filter(Boolean)
+    }
+    return []
+  }
+
+  const normalized = ensureArray(attemptParse(rawValue))
+
+  return normalized
+    .filter(item => typeof item === 'string')
+    .map(item => {
+      const trimmed = trim ? item.trim() : item
+      return maxLength < Infinity ? trimmed.slice(0, maxLength) : trimmed
+    })
+    .filter(item => item.length > 0)
 }

@@ -4,29 +4,36 @@ import User from '../models/User.js'
 import UserActivity from '../models/UserActivity.js'
 import socketService from '../services/socketService.js'
 
-// @desc    Get all posts with filtering, sorting, and pagination
+// @desc    Get all posts with advanced filtering, sorting, and cursor-based pagination
 // @route   GET /api/posts
 // @access  Public
 export const getPosts = async (req, res) => {
   try {
     const {
       page = 1,
-      limit = 10,
-      sort = 'hot', // hot, new, top, controversial
+      limit = 20, // Increased default limit for better UX
+      sort = 'hot', // hot, new, top, controversial, rising
       category,
       search,
       year,
       branch,
-      author
+      author,
+      cursor, // For cursor-based pagination
+      timeframe = 'all' // all, hour, day, week, month
     } = req.query
 
-    // Build filter object
+    // Enhanced filter building with optimization
     const filter = { isHidden: false }
+    
+    // Add pinned posts priority (they appear first)
+    const pinnedFilter = { ...filter, isPinned: true }
+    const regularFilter = { ...filter, isPinned: { $ne: true } }
     
     if (category && category !== 'all') {
       filter.category = category
     }
     
+    // Optimized year/branch filtering
     if (year && year !== 'All') {
       filter.$or = [
         { targetYear: year },
@@ -43,137 +50,296 @@ export const getPosts = async (req, res) => {
     }
     
     if (author) {
-      filter.author = author
+      filter.author = new mongoose.Types.ObjectId(author)
     }
     
+    // Enhanced search with better text scoring
     if (search) {
-      filter.$text = { $search: search }
+      filter.$text = { 
+        $search: search,
+        $caseSensitive: false,
+        $diacriticSensitive: false
+      }
     }
 
-    // Calculate pagination
-    const skip = (parseInt(page) - 1) * parseInt(limit)
-    
-    // Build aggregation pipeline for sorting
-    let pipeline = [
-      { $match: filter },
-      {
-        $addFields: {
-          voteCount: { $subtract: [{ $size: "$upvotes" }, { $size: "$downvotes" }] },
-          commentCount: { $size: "$comments" },
-          ageInHours: {
-            $divide: [
-              { $subtract: [new Date(), "$createdAt"] },
-              3600000 // Convert milliseconds to hours
-            ]
-          }
-        }
+    // Timeframe filtering for trending/top posts
+    if (timeframe !== 'all') {
+      const timeMap = {
+        hour: 1,
+        day: 24,
+        week: 24 * 7,
+        month: 24 * 30
       }
+      const hoursBack = timeMap[timeframe] || 24
+      const cutoffTime = new Date(Date.now() - hoursBack * 60 * 60 * 1000)
+      filter.createdAt = { $gte: cutoffTime }
+    }
+
+    // Calculate pagination - support both offset and cursor
+    const pageSize = Math.min(parseInt(limit), 50) // Max 50 posts per page
+    const skip = cursor ? 0 : (parseInt(page) - 1) * pageSize
+    
+    // Enhanced aggregation pipeline with performance optimizations
+    let pipeline = [
+      { $match: filter }
     ]
 
-    // Add sorting based on algorithm
+    // Add cursor-based pagination if cursor is provided
+    if (cursor) {
+      try {
+        const cursorData = JSON.parse(Buffer.from(cursor, 'base64').toString())
+        if (cursorData.timestamp) {
+          pipeline.push({
+            $match: {
+              $or: [
+                { createdAt: { $lt: new Date(cursorData.timestamp) } },
+                { 
+                  createdAt: new Date(cursorData.timestamp),
+                  _id: { $lt: new mongoose.Types.ObjectId(cursorData.id) }
+                }
+              ]
+            }
+          })
+        }
+      } catch (error) {
+        console.warn('Invalid cursor provided:', cursor)
+      }
+    }
+
+    // Pre-compute fields for sorting and filtering
+    pipeline.push({
+      $addFields: {
+        voteCount: { $subtract: [{ $size: "$upvotes" }, { $size: "$downvotes" }] },
+        commentCount: { $size: "$comments" },
+        upvoteCount: { $size: "$upvotes" },
+        downvoteCount: { $size: "$downvotes" },
+        totalVotes: { $add: [{ $size: "$upvotes" }, { $size: "$downvotes" }] },
+        ageInHours: {
+          $divide: [
+            { $subtract: [new Date(), "$createdAt"] },
+            3600000
+          ]
+        },
+        ageInMinutes: {
+          $divide: [
+            { $subtract: [new Date(), "$createdAt"] },
+            60000
+          ]
+        }
+      }
+    })
+
+    // Enhanced sorting algorithms
     switch (sort) {
       case 'hot':
         pipeline.push({
           $addFields: {
             hotScore: {
-              $divide: [
-                { $add: ["$voteCount", { $multiply: ["$commentCount", 0.5] }] },
-                { $pow: [{ $add: ["$ageInHours", 2] }, 1.8] }
-              ]
-            }
-          }
-        })
-        pipeline.push({ $sort: { hotScore: -1 } })
-        break
-      case 'new':
-        pipeline.push({ $sort: { createdAt: -1 } })
-        break
-      case 'top':
-        pipeline.push({ $sort: { voteCount: -1, createdAt: -1 } })
-        break
-      case 'controversial':
-        pipeline.push({
-          $addFields: {
-            controversyScore: {
               $cond: {
-                if: { $eq: ["$voteCount", 0] },
-                then: 0,
+                if: { $eq: ["$ageInHours", 0] },
+                then: "$voteCount",
                 else: {
                   $divide: [
-                    { $add: [{ $size: "$upvotes" }, { $size: "$downvotes" }] },
-                    { $abs: "$voteCount" }
+                    { 
+                      $add: [
+                        { $multiply: ["$voteCount", 2] }, // Weight votes more
+                        { $multiply: ["$commentCount", 0.8] }, // Comments boost
+                        { $divide: ["$viewCount", 20] } // Views slight boost
+                      ]
+                    },
+                    { $pow: [{ $add: ["$ageInHours", 2] }, 1.5] } // Less aggressive time decay
                   ]
                 }
               }
             }
           }
         })
-        pipeline.push({ $sort: { controversyScore: -1, createdAt: -1 } })
+        pipeline.push({ $sort: { isPinned: -1, hotScore: -1, createdAt: -1 } })
         break
+        
+      case 'rising':
+        // New algorithm for rising posts (recent posts gaining traction)
+        pipeline.push({
+          $addFields: {
+            risingScore: {
+              $cond: {
+                if: { $lt: ["$ageInHours", 24] },
+                then: {
+                  $divide: [
+                    { $add: ["$voteCount", { $multiply: ["$commentCount", 0.5] }] },
+                    { $add: ["$ageInHours", 1] }
+                  ]
+                },
+                else: 0
+              }
+            }
+          }
+        })
+        pipeline.push({ $sort: { isPinned: -1, risingScore: -1, createdAt: -1 } })
+        break
+        
+      case 'new':
+        pipeline.push({ $sort: { isPinned: -1, createdAt: -1 } })
+        break
+        
+      case 'top':
+        pipeline.push({ $sort: { isPinned: -1, voteCount: -1, createdAt: -1 } })
+        break
+        
+      case 'controversial':
+        pipeline.push({
+          $addFields: {
+            controversyScore: {
+              $cond: {
+                if: { $and: [{ $gt: ["$totalVotes", 5] }, { $ne: ["$voteCount", 0] }] },
+                then: {
+                  $divide: [
+                    "$totalVotes",
+                    { $add: [{ $abs: "$voteCount" }, 1] }
+                  ]
+                },
+                else: 0
+              }
+            }
+          }
+        })
+        pipeline.push({ $sort: { isPinned: -1, controversyScore: -1, totalVotes: -1 } })
+        break
+        
+      case 'discussed':
+        // Most commented posts
+        pipeline.push({ $sort: { isPinned: -1, commentCount: -1, createdAt: -1 } })
+        break
+        
       default:
-        pipeline.push({ $sort: { createdAt: -1 } })
+        pipeline.push({ $sort: { isPinned: -1, createdAt: -1 } })
     }
 
-    // Add pagination
-    pipeline.push({ $skip: skip })
-    pipeline.push({ $limit: parseInt(limit) })
+    // Pagination
+    if (!cursor) {
+      pipeline.push({ $skip: skip })
+    }
+    pipeline.push({ $limit: pageSize + 1 }) // Get one extra to check if there are more
 
-    // Populate author information
+    // Optimized author population
     pipeline.push({
       $lookup: {
         from: 'users',
         localField: 'author',
         foreignField: '_id',
-        as: 'author'
+        as: 'author',
+        pipeline: [
+          {
+            $project: {
+              name: 1,
+              studentId: 1,
+              year: 1,
+              branch: 1,
+              profilePicture: 1,
+              role: 1,
+              _id: 1
+            }
+          }
+        ]
       }
     })
     pipeline.push({ $unwind: '$author' })
 
-    // Remove sensitive author information but keep vote user IDs for userVote calculation
-    pipeline.push({
-      $project: {
-        'author.password': 0,
-        'author.email': 0
-      }
-    })
-
-    const posts = await Post.aggregate(pipeline)
-    
-    // Add userVote field for authenticated users
-    if (req.user) {
-      posts.forEach(post => {
-        const userUpvoted = post.upvotes.some(vote => vote.user?.toString() === req.user.id)
-        const userDownvoted = post.downvotes.some(vote => vote.user?.toString() === req.user.id)
-        
-        if (userUpvoted) {
-          post.userVote = 'up'
-        } else if (userDownvoted) {
-          post.userVote = 'down'
-        } else {
-          post.userVote = null
+    // Add text search score if searching
+    if (search) {
+      pipeline.push({
+        $addFields: {
+          searchScore: { $meta: "textScore" }
         }
       })
     }
+
+    // Execute aggregation
+    const posts = await Post.aggregate(pipeline).allowDiskUse(true) // Allow disk use for large datasets
     
-    // Get total count for pagination
-    const total = await Post.countDocuments(filter)
+    // Check if there are more posts
+    const hasMore = posts.length > pageSize
+    if (hasMore) {
+      posts.pop() // Remove the extra post
+    }
+
+    // Generate next cursor for cursor-based pagination
+    let nextCursor = null
+    if (hasMore && posts.length > 0) {
+      const lastPost = posts[posts.length - 1]
+      const cursorData = {
+        timestamp: lastPost.createdAt,
+        id: lastPost._id
+      }
+      nextCursor = Buffer.from(JSON.stringify(cursorData)).toString('base64')
+    }
+    
+    // Add userVote and isSaved fields for authenticated users (batch operation)
+    if (req.user && posts.length > 0) {
+      const userId = req.user.id
+      
+      // Get user's saved posts for saved status check
+      const user = await User.findById(userId).select('savedPosts')
+      const savedPostIds = user?.savedPosts || []
+      
+      posts.forEach(post => {
+        const userUpvoted = post.upvotes.some(vote => 
+          vote.user?.toString() === userId || vote.toString() === userId
+        )
+        const userDownvoted = post.downvotes.some(vote => 
+          vote.user?.toString() === userId || vote.toString() === userId
+        )
+        
+        post.userVote = userUpvoted ? 'up' : (userDownvoted ? 'down' : null)
+        post.isSaved = savedPostIds.some(savedId => savedId.toString() === post._id.toString())
+      })
+    }
+    
+    // Efficient total count (only for first page or when specifically requested)
+    let total = null
+    if (!cursor && page == 1) {
+      // Use estimatedDocumentCount for better performance on large datasets
+      if (Object.keys(filter).length === 1 && filter.isHidden === false) {
+        total = await Post.estimatedDocumentCount()
+      } else {
+        // Use a separate aggregation for count with similar filters but no expensive operations
+        const countPipeline = [
+          { $match: filter },
+          { $count: "total" }
+        ]
+        const countResult = await Post.aggregate(countPipeline)
+        total = countResult.length > 0 ? countResult[0].total : 0
+      }
+    }
     
     // Calculate pagination info
-    const totalPages = Math.ceil(total / parseInt(limit))
-    const hasNextPage = parseInt(page) < totalPages
-    const hasPrevPage = parseInt(page) > 1
+    const currentPage = parseInt(page)
+    const totalPages = total ? Math.ceil(total / pageSize) : null
+    const hasNextPage = cursor ? hasMore : (total ? currentPage < totalPages : hasMore)
+    const hasPrevPage = currentPage > 1
 
+    // Response with enhanced metadata
     res.json({
       success: true,
       data: {
         posts,
         pagination: {
-          currentPage: parseInt(page),
+          currentPage,
           totalPages,
           total,
           hasNextPage,
           hasPrevPage,
-          limit: parseInt(limit)
+          limit: pageSize,
+          nextCursor,
+          sort,
+          category,
+          timeframe
+        },
+        meta: {
+          algorithm: sort,
+          cached: false, // Will be true if implementing Redis cache
+          responseTime: Date.now() - req.startTime,
+          postCount: posts.length
         }
       }
     })
@@ -181,7 +347,8 @@ export const getPosts = async (req, res) => {
     console.error('Get posts error:', error)
     res.status(500).json({
       success: false,
-      message: 'Server error fetching posts'
+      message: 'Server error fetching posts',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
     })
   }
 }

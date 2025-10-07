@@ -1,4 +1,10 @@
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5001/api'
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api'
+
+console.log('🔧 API Configuration:', {
+  VITE_API_URL: import.meta.env.VITE_API_URL,
+  API_BASE_URL,
+  mode: import.meta.env.MODE
+})
 
 class ApiService {
   constructor() {
@@ -23,7 +29,11 @@ class ApiService {
   // Get auth headers
   getAuthHeaders(isFormData = false) {
     const token = this.getAuthToken()
-    const headers = {}
+    const headers = {
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+      'Pragma': 'no-cache',
+      'Expires': '0'
+    }
     
     // Don't set Content-Type for FormData - browser will set it with boundary
     if (!isFormData) {
@@ -47,17 +57,55 @@ class ApiService {
       ...options
     }
 
+    console.log('🌐 API Request:', {
+      method: options.method || 'GET',
+      url,
+      headers: config.headers,
+      hasBody: !!options.body,
+      isFormData
+    })
+
     try {
       const response = await fetch(url, config)
-      const data = await response.json()
+      
+      console.log('📡 API Response Status:', {
+        status: response.status,
+        statusText: response.statusText,
+        ok: response.ok,
+        url: response.url
+      })
 
-      if (!response.ok) {
-        throw new Error(data.message || 'API request failed')
+      let data
+      const contentType = response.headers.get('content-type')
+      
+      if (contentType && contentType.includes('application/json')) {
+        data = await response.json()
+      } else {
+        const text = await response.text()
+        console.warn('⚠️ Non-JSON response:', text)
+        data = { success: false, message: 'Invalid response format', raw: text }
       }
 
+      if (!response.ok) {
+        console.error('❌ API Error Response:', data)
+        throw new Error(data.message || `HTTP ${response.status}: ${response.statusText}`)
+      }
+
+      console.log('✅ API Success Response:', data)
       return data
     } catch (error) {
-      console.error('API Error:', error)
+      console.error('❌ API Network Error:', {
+        message: error.message,
+        name: error.name,
+        url,
+        endpoint
+      })
+      
+      // Handle different types of errors
+      if (error.name === 'TypeError' && error.message.includes('fetch')) {
+        throw new Error('Unable to connect to server. Please check if the backend is running.')
+      }
+      
       throw error
     }
   }
@@ -86,6 +134,31 @@ class ApiService {
   // DELETE request
   async delete(endpoint) {
     return this.apiCall(endpoint, { method: 'DELETE' })
+  }
+
+  // Clear all caches and force refresh
+  clearCache() {
+    console.log('🧹 Clearing all caches...')
+    
+    // Clear localStorage cache items
+    const cacheKeys = Object.keys(localStorage).filter(key => 
+      key.includes('cache') || key.includes('events') || key.includes('api')
+    )
+    cacheKeys.forEach(key => {
+      localStorage.removeItem(key)
+      console.log('🗑️ Removed cache key:', key)
+    })
+
+    // Clear sessionStorage cache items
+    const sessionCacheKeys = Object.keys(sessionStorage).filter(key => 
+      key.includes('cache') || key.includes('events') || key.includes('api')
+    )
+    sessionCacheKeys.forEach(key => {
+      sessionStorage.removeItem(key)
+      console.log('🗑️ Removed session cache key:', key)
+    })
+
+    console.log('✅ Cache cleared successfully')
   }
 }
 

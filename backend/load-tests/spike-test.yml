@@ -1,0 +1,54 @@
+config:
+  target: 'http://localhost:5001'
+  phases:
+    - duration: 30
+      arrivalRate: 20
+      name: "Baseline"
+    - duration: 60
+      arrivalRate: 200
+      name: "Spike to 200 users/sec"
+    - duration: 30
+      arrivalRate: 500
+      name: "Peak spike - 500 users/sec"
+    - duration: 60
+      arrivalRate: 50
+      name: "Recovery"
+  defaults:
+    headers:
+      Content-Type: 'application/json'
+
+scenarios:
+  - name: "Spike Load - Read Heavy"
+    weight: 70
+    flow:
+      - get:
+          url: "/health"
+      - get:
+          url: "/api/posts?page={{ $randomInt(1, 5) }}&limit=10"
+      - think: 1  # 1 second pause between requests
+
+  - name: "Spike Load - Write Operations"
+    weight: 30
+    flow:
+      - post:
+          url: "/api/auth/login"
+          json:
+            email: "test1@tcet.com"
+            password: "password123"
+          capture:
+            - json: "$.token"
+              as: "authToken"
+      - post:
+          url: "/api/posts"
+          headers:
+            Authorization: "Bearer {{ authToken }}"
+          json:
+            content: "Spike test post {{ $timestamp() }}"
+            type: "general"
+      - think: 2
+
+# Spike test - expect some failures
+ensure:
+  p95: 2000    # Higher response times expected during spikes
+  p99: 5000
+  maxErrorRate: 10  # Allow up to 10% error rate during spike

@@ -38,7 +38,6 @@ const EventAnalytics = () => {
 
       // Listen for real-time analytics updates
       socket?.on('analytics_update', (data) => {
-        console.log('Analytics update received:', data)
         setRealTimeStats(prev => ({
           ...prev,
           ...data
@@ -46,7 +45,7 @@ const EventAnalytics = () => {
       })
 
       // Listen for new events to update stats
-      socket?.on('new_event_created', (eventData) => {
+      socket?.on('new_event', (eventData) => {
         setRealTimeStats(prev => ({
           ...prev,
           newEventsToday: prev.newEventsToday + 1
@@ -69,7 +68,7 @@ const EventAnalytics = () => {
       })
 
       // Listen for RSVP updates
-      socket?.on('rsvp_update', (rsvpData) => {
+      socket?.on('rsvp_updated', (rsvpData) => {
         setRealTimeStats(prev => ({
           ...prev,
           newRSVPsToday: prev.newRSVPsToday + 1
@@ -100,10 +99,10 @@ const EventAnalytics = () => {
 
       return () => {
         socket?.emit('leave_analytics')
-        socket?.off('analytics_update')
-        socket?.off('new_event_created')
-        socket?.off('rsvp_update')
-        socket?.off('user_activity_update')
+  socket?.off('analytics_update')
+  socket?.off('new_event')
+  socket?.off('rsvp_updated')
+  socket?.off('user_activity_update')
       }
     }
   }, [isConnected, socket])

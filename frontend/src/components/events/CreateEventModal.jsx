@@ -1,7 +1,7 @@
-import { FiX, FiCalendar, FiClock, FiMapPin, FiUsers, FiTag, FiImage, FiMail, FiPhone, FiWifi, FiWifiOff } from 'react-icons/fi'
+import { FiX, FiCalendar, FiClock, FiMapPin, FiUsers, FiTag, FiMail, FiPhone, FiWifi, FiWifiOff } from 'react-icons/fi'
 import useEventCreation from '../../hooks/useEventCreation'
 
-const CreateEventModal = ({ isOpen, onClose, onEventCreated }) => {
+const CreateEventModal = ({ isOpen, onClose, onEventCreated, event = null }) => {
   const {
     formData,
     loading,
@@ -11,7 +11,9 @@ const CreateEventModal = ({ isOpen, onClose, onEventCreated }) => {
     createEvent,
     updateField,
     resetForm
-  } = useEventCreation(onEventCreated)
+  } = useEventCreation(onEventCreated, event)
+
+  const isEditing = Boolean(event)
 
   const handleChange = (e) => {
     const { name, value, type } = e.target
@@ -30,13 +32,41 @@ const CreateEventModal = ({ isOpen, onClose, onEventCreated }) => {
   const getTomorrowDate = () => {
     const tomorrow = new Date()
     tomorrow.setDate(tomorrow.getDate() + 1)
-    return tomorrow.toISOString().split('T')[0]
+    // Get local date to avoid timezone issues
+    const year = tomorrow.getFullYear()
+    const month = String(tomorrow.getMonth() + 1).padStart(2, '0')
+    const day = String(tomorrow.getDate()).padStart(2, '0')
+    return `${year}-${month}-${day}`
   }
 
-  const getMinRegistrationDate = () => {
+  const getTodayDate = () => {
     const today = new Date()
-    return today.toISOString().split('T')[0]
+    const year = today.getFullYear()
+    const month = String(today.getMonth() + 1).padStart(2, '0')
+    const day = String(today.getDate()).padStart(2, '0')
+    return `${year}-${month}-${day}`
   }
+
+  const getMaxRegistrationDate = () => {
+    // Registration deadline can't be after the event date
+    if (formData.eventDate) {
+      return formData.eventDate
+    }
+    // If no event date selected, allow up to 1 year from now
+    const maxDate = new Date()
+    maxDate.setFullYear(maxDate.getFullYear() + 1)
+    const year = maxDate.getFullYear()
+    const month = String(maxDate.getMonth() + 1).padStart(2, '0')
+    const day = String(maxDate.getDate()).padStart(2, '0')
+    return `${year}-${month}-${day}`
+  }
+
+  const registrationTimeMax =
+    formData.registrationDeadline &&
+    formData.eventDate &&
+    formData.registrationDeadline === formData.eventDate
+      ? formData.eventTime || undefined
+      : undefined
 
   if (!isOpen) return null
 
@@ -49,7 +79,9 @@ const CreateEventModal = ({ isOpen, onClose, onEventCreated }) => {
           {/* Header */}
           <div className="flex items-center justify-between mb-6">
             <div>
-              <h2 className="text-2xl font-bold text-gradient">Create New Event</h2>
+              <h2 className="text-2xl font-bold text-gradient">
+                {event ? 'Edit Event' : 'Create New Event'}
+              </h2>
               {isConnected && (
                 <p className="text-sm text-green-400 mt-1">
                   🟢 Real-time broadcasting enabled
@@ -57,18 +89,17 @@ const CreateEventModal = ({ isOpen, onClose, onEventCreated }) => {
               )}
             </div>
             <button
+              type="button"
               onClick={onClose}
               className="p-2 hover:bg-white/10 rounded-lg transition-colors"
+              aria-label="Close modal"
             >
-              <FiX className="w-5 h-5" />
+              <FiX className="w-6 h-6" />
             </button>
           </div>
 
-          <form onSubmit={handleSubmit} className="space-y-6">
-            {/* Basic Information */}
+          <form onSubmit={handleSubmit} className="space-y-8" noValidate>
             <div className="space-y-4">
-              <h3 className="text-lg font-semibold border-b border-white/20 pb-2">Basic Information</h3>
-              
               <div>
                 <label htmlFor="title" className="block text-sm font-medium text-gray-300 mb-2">
                   Event Title *
@@ -101,9 +132,14 @@ const CreateEventModal = ({ isOpen, onClose, onEventCreated }) => {
                   value={formData.description}
                   onChange={handleChange}
                   rows="4"
-                  className="form-input block w-full py-3 px-3 rounded-lg text-white placeholder-gray-400 focus:outline-none resize-none"
-                  placeholder="Describe your event..."
+                  className={`form-input block w-full py-3 px-3 rounded-lg text-white placeholder-gray-400 focus:outline-none resize-none ${
+                    errors.description ? 'border-red-500 focus:border-red-500' : 'border-white/20 focus:border-purple-500'
+                  }`}
+                  placeholder="Describe your event in detail..."
                 />
+                {errors.description && (
+                  <p className="text-red-400 text-sm mt-1">{errors.description}</p>
+                )}
               </div>
 
               <div>
@@ -116,7 +152,9 @@ const CreateEventModal = ({ isOpen, onClose, onEventCreated }) => {
                   required
                   value={formData.category}
                   onChange={handleChange}
-                  className="form-input block w-full py-3 px-3 rounded-lg text-white focus:outline-none"
+                  className={`form-input block w-full py-3 px-3 rounded-lg text-white focus:outline-none ${
+                    errors.category ? 'border-red-500 focus:border-red-500' : 'border-white/20 focus:border-purple-500'
+                  }`}
                 >
                   <option value="" className="bg-gray-900">Select category</option>
                   {categories.map(category => (
@@ -125,6 +163,9 @@ const CreateEventModal = ({ isOpen, onClose, onEventCreated }) => {
                     </option>
                   ))}
                 </select>
+                {errors.category && (
+                  <p className="text-red-400 text-sm mt-1">{errors.category}</p>
+                )}
               </div>
             </div>
 
@@ -142,11 +183,16 @@ const CreateEventModal = ({ isOpen, onClose, onEventCreated }) => {
                     name="eventDate"
                     type="date"
                     required
-                    min={getTomorrowDate()}
+                    min={isEditing ? undefined : getTodayDate()}
                     value={formData.eventDate}
                     onChange={handleChange}
-                    className="form-input block w-full py-3 px-3 rounded-lg text-white focus:outline-none"
+                    className={`form-input block w-full py-3 px-3 rounded-lg text-white focus:outline-none ${
+                      errors.eventDate ? 'border-red-500 focus:border-red-500' : 'border-white/20 focus:border-purple-500'
+                    }`}
                   />
+                  {errors.eventDate && (
+                    <p className="text-red-400 text-sm mt-1">{errors.eventDate}</p>
+                  )}
                 </div>
 
                 <div>
@@ -160,8 +206,13 @@ const CreateEventModal = ({ isOpen, onClose, onEventCreated }) => {
                     required
                     value={formData.eventTime}
                     onChange={handleChange}
-                    className="form-input block w-full py-3 px-3 rounded-lg text-white focus:outline-none"
+                    className={`form-input block w-full py-3 px-3 rounded-lg text-white focus:outline-none ${
+                      errors.eventTime ? 'border-red-500 focus:border-red-500' : 'border-white/20 focus:border-purple-500'
+                    }`}
                   />
+                  {errors.eventTime && (
+                    <p className="text-red-400 text-sm mt-1">{errors.eventTime}</p>
+                  )}
                 </div>
               </div>
 
@@ -179,25 +230,55 @@ const CreateEventModal = ({ isOpen, onClose, onEventCreated }) => {
                   required
                   value={formData.duration}
                   onChange={handleChange}
-                  className="form-input block w-full py-3 px-3 rounded-lg text-white focus:outline-none"
+                  className={`form-input block w-full py-3 px-3 rounded-lg text-white focus:outline-none ${
+                    errors.duration ? 'border-red-500 focus:border-red-500' : 'border-white/20 focus:border-purple-500'
+                  }`}
+                  placeholder="e.g., 2.5 for 2 hours 30 minutes"
                 />
+                {errors.duration && (
+                  <p className="text-red-400 text-sm mt-1">{errors.duration}</p>
+                )}
               </div>
 
               <div>
                 <label htmlFor="registrationDeadline" className="block text-sm font-medium text-gray-300 mb-2">
                   Registration Deadline *
                 </label>
-                <input
-                  id="registrationDeadline"
-                  name="registrationDeadline"
-                  type="date"
-                  required
-                  min={getMinRegistrationDate()}
-                  max={formData.eventDate}
-                  value={formData.registrationDeadline}
-                  onChange={handleChange}
-                  className="form-input block w-full py-3 px-3 rounded-lg text-white focus:outline-none"
-                />
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <input
+                    id="registrationDeadline"
+                    name="registrationDeadline"
+                    type="date"
+                    required
+                    min={isEditing ? undefined : getTodayDate()}
+                    max={getMaxRegistrationDate()}
+                    value={formData.registrationDeadline}
+                    onChange={handleChange}
+                    className="form-input block w-full py-3 px-3 rounded-lg text-white focus:outline-none"
+                  />
+                  <div>
+                    <label htmlFor="registrationDeadlineTime" className="block text-sm font-medium text-gray-300 mb-2">
+                      Time *
+                    </label>
+                    <input
+                      id="registrationDeadlineTime"
+                      name="registrationDeadlineTime"
+                      type="time"
+                      required
+                      value={formData.registrationDeadlineTime}
+                      onChange={handleChange}
+                      min="00:00"
+                      max={registrationTimeMax}
+                      className="form-input block w-full py-3 px-3 rounded-lg text-white focus:outline-none"
+                    />
+                  </div>
+                </div>
+                {errors.registrationDeadline && (
+                  <p className="text-red-400 text-sm mt-1">{errors.registrationDeadline}</p>
+                )}
+                {errors.registrationDeadlineTime && (
+                  <p className="text-red-400 text-sm mt-1">{errors.registrationDeadlineTime}</p>
+                )}
               </div>
             </div>
 
@@ -216,9 +297,14 @@ const CreateEventModal = ({ isOpen, onClose, onEventCreated }) => {
                   required
                   value={formData.venue}
                   onChange={handleChange}
-                  className="form-input block w-full py-3 px-3 rounded-lg text-white placeholder-gray-400 focus:outline-none"
-                  placeholder="Enter event venue"
+                  className={`form-input block w-full py-3 px-3 rounded-lg text-white placeholder-gray-400 focus:outline-none ${
+                    errors.venue ? 'border-red-500 focus:border-red-500' : 'border-white/20 focus:border-purple-500'
+                  }`}
+                  placeholder="e.g., Seminar Hall 1, Engineering Block"
                 />
+                {errors.venue && (
+                  <p className="text-red-400 text-sm mt-1">{errors.venue}</p>
+                )}
               </div>
 
               <div>
@@ -234,8 +320,14 @@ const CreateEventModal = ({ isOpen, onClose, onEventCreated }) => {
                   required
                   value={formData.capacity}
                   onChange={handleChange}
-                  className="form-input block w-full py-3 px-3 rounded-lg text-white focus:outline-none"
+                  className={`form-input block w-full py-3 px-3 rounded-lg text-white focus:outline-none ${
+                    errors.capacity ? 'border-red-500 focus:border-red-500' : 'border-white/20 focus:border-purple-500'
+                  }`}
+                  placeholder="Maximum number of attendees"
                 />
+                {errors.capacity && (
+                  <p className="text-red-400 text-sm mt-1">{errors.capacity}</p>
+                )}
               </div>
             </div>
 
@@ -273,88 +365,7 @@ const CreateEventModal = ({ isOpen, onClose, onEventCreated }) => {
                 />
               </div>
 
-              <div>
-                <label className="block text-sm font-medium text-gray-300 mb-3">
-                  Event Poster
-                </label>
-                
-                {/* Image Upload/URL Toggle */}
-                <div className="flex space-x-4 mb-4">
-                  <button
-                    type="button"
-                    onClick={() => updateField('imageInputType', 'upload')}
-                    className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                      formData.imageInputType === 'upload'
-                        ? 'bg-purple-500 text-white'
-                        : 'bg-white/10 text-gray-300 hover:bg-white/20'
-                    }`}
-                  >
-                    <FiImage className="w-4 h-4 inline mr-2" />
-                    Upload Image
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => updateField('imageInputType', 'url')}
-                    className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                      formData.imageInputType === 'url'
-                        ? 'bg-purple-500 text-white'
-                        : 'bg-white/10 text-gray-300 hover:bg-white/20'
-                    }`}
-                  >
-                    🔗 Image URL
-                  </button>
-                </div>
 
-                {/* Upload Input */}
-                {formData.imageInputType === 'upload' && (
-                  <div className="border-2 border-dashed border-white/20 rounded-lg p-6 text-center hover:border-purple-500/50 transition-colors">
-                    <input
-                      type="file"
-                      accept="image/*"
-                      onChange={(e) => updateField('posterFile', e.target.files[0])}
-                      className="hidden"
-                      id="posterUpload"
-                    />
-                    <label htmlFor="posterUpload" className="cursor-pointer">
-                      <FiImage className="w-8 h-8 mx-auto mb-2 text-gray-400" />
-                      <p className="text-sm text-gray-400">
-                        {formData.posterFile ? formData.posterFile.name : 'Click to upload poster (Max 5MB)'}
-                      </p>
-                      <p className="text-xs text-gray-500 mt-1">PNG, JPG, JPEG up to 5MB</p>
-                    </label>
-                  </div>
-                )}
-
-                {/* URL Input */}
-                {formData.imageInputType === 'url' && (
-                  <input
-                    name="imageUrl"
-                    type="url"
-                    value={formData.imageUrl}
-                    onChange={handleChange}
-                    className="form-input block w-full py-3 px-3 rounded-lg text-white placeholder-gray-400 focus:outline-none"
-                    placeholder="https://example.com/poster.jpg"
-                  />
-                )}
-
-                {/* Image Preview */}
-                {(formData.imageUrl || formData.posterFile) && (
-                  <div className="mt-3">
-                    <img
-                      src={formData.posterFile ? URL.createObjectURL(formData.posterFile) : formData.imageUrl}
-                      alt="Event poster preview"
-                      className="w-full h-32 object-cover rounded-lg"
-                      onError={(e) => {
-                        e.target.style.display = 'none'
-                      }}
-                    />
-                  </div>
-                )}
-
-                {errors.image && (
-                  <p className="text-red-400 text-sm mt-2">{errors.image}</p>
-                )}
-              </div>
             </div>
 
             {/* Contact Information */}
@@ -372,9 +383,14 @@ const CreateEventModal = ({ isOpen, onClose, onEventCreated }) => {
                     type="email"
                     value={formData.contactEmail}
                     onChange={handleChange}
-                    className="form-input block w-full py-3 px-3 rounded-lg text-white placeholder-gray-400 focus:outline-none"
+                    className={`form-input block w-full py-3 px-3 rounded-lg text-white placeholder-gray-400 focus:outline-none ${
+                      errors.contactEmail ? 'border-red-500 focus:border-red-500' : 'border-white/20 focus:border-purple-500'
+                    }`}
                     placeholder="event@club.com"
                   />
+                  {errors.contactEmail && (
+                    <p className="text-red-400 text-sm mt-1">{errors.contactEmail}</p>
+                  )}
                 </div>
 
                 <div>
@@ -387,9 +403,14 @@ const CreateEventModal = ({ isOpen, onClose, onEventCreated }) => {
                     type="tel"
                     value={formData.contactPhone}
                     onChange={handleChange}
-                    className="form-input block w-full py-3 px-3 rounded-lg text-white placeholder-gray-400 focus:outline-none"
-                    placeholder="1234567890"
+                    className={`form-input block w-full py-3 px-3 rounded-lg text-white placeholder-gray-400 focus:outline-none ${
+                      errors.contactPhone ? 'border-red-500 focus:border-red-500' : 'border-white/20 focus:border-purple-500'
+                    }`}
+                    placeholder="9876543210"
                   />
+                  {errors.contactPhone && (
+                    <p className="text-red-400 text-sm mt-1">{errors.contactPhone}</p>
+                  )}
                 </div>
               </div>
             </div>
@@ -411,12 +432,12 @@ const CreateEventModal = ({ isOpen, onClose, onEventCreated }) => {
                 {loading ? (
                   <>
                     <div className="spinner w-5 h-5 border-2 border-white border-t-transparent rounded-full"></div>
-                    <span>Creating...</span>
+                    <span>{event ? 'Updating...' : 'Creating...'}</span>
                   </>
                 ) : (
                   <>
                     <FiCalendar className="w-5 h-5" />
-                    <span>Create Event</span>
+                    <span>{event ? 'Update Event' : 'Create Event'}</span>
                   </>
                 )}
               </button>

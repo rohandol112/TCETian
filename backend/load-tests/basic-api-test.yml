@@ -1,0 +1,85 @@
+config:
+  target: 'http://localhost:5001'
+  phases:
+    - duration: 60
+      arrivalRate: 5
+      name: "Warm up"
+    - duration: 120
+      arrivalRate: 10
+      name: "Ramp up load"
+    - duration: 300
+      arrivalRate: 20
+      name: "Sustained load"
+  defaults:
+    headers:
+      Content-Type: 'application/json'
+
+scenarios:
+  - name: "User Registration and Login"
+    weight: 20
+    flow:
+      - post:
+          url: "/api/auth/register"
+          json:
+            name: "Test User {{ $randomString() }}"
+            email: "test{{ $randomInt(1, 10000) }}@tcet.com"
+            password: "password123"
+            role: "student"
+      - post:
+          url: "/api/auth/login"
+          json:
+            email: "test{{ $randomInt(1, 10000) }}@tcet.com"
+            password: "password123"
+          capture:
+            - json: "$.token"
+              as: "authToken"
+
+  - name: "Browse Posts"
+    weight: 40
+    flow:
+      - get:
+          url: "/api/posts?page=1&limit=10"
+      - get:
+          url: "/api/posts?page={{ $randomInt(1, 5) }}&limit=10"
+
+  - name: "Create and Interact with Posts"
+    weight: 30
+    flow:
+      - post:
+          url: "/api/auth/login"
+          json:
+            email: "test1@tcet.com"
+            password: "password123"
+          capture:
+            - json: "$.token"
+              as: "authToken"
+      - post:
+          url: "/api/posts"
+          headers:
+            Authorization: "Bearer {{ authToken }}"
+          json:
+            content: "Test post content {{ $randomString() }}"
+            type: "general"
+          capture:
+            - json: "$.data._id"
+              as: "postId"
+      - post:
+          url: "/api/posts/{{ postId }}/vote"
+          headers:
+            Authorization: "Bearer {{ authToken }}"
+          json:
+            voteType: "upvote"
+
+  - name: "Browse Events"
+    weight: 10
+    flow:
+      - get:
+          url: "/api/events"
+      - get:
+          url: "/api/events?category=technical"
+
+# Performance assertions
+ensure:
+  p95: 500  # 95th percentile response time should be under 500ms
+  p99: 1000 # 99th percentile response time should be under 1000ms
+  maxErrorRate: 1  # Error rate should be under 1%

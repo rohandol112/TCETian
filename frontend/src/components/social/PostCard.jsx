@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { FiHeart, FiMessageCircle, FiShare, FiMoreVertical, FiChevronUp, FiChevronDown, FiTrash2, FiEdit, FiFlag, FiSend } from 'react-icons/fi'
+import { FaHeart } from 'react-icons/fa'
 import { commentService } from '../../services/commentService.js'
 import { useSocket } from '../../context/SocketContext'
 import { useToast } from '../../context/ToastContext'
@@ -7,7 +8,7 @@ import { useToast } from '../../context/ToastContext'
 const PostCard = ({ post, currentUser, onVote, onDelete, onSave, onShare, formatTimeAgo }) => {
   const [showActions, setShowActions] = useState(false)
   const [showComments, setShowComments] = useState(false)
-  const [isSaved, setIsSaved] = useState(false)
+  const [isSaved, setIsSaved] = useState(post.isSaved || false)
   const [comments, setComments] = useState([])
   const [newComment, setNewComment] = useState('')
   const [loadingComments, setLoadingComments] = useState(false)
@@ -22,6 +23,11 @@ const PostCard = ({ post, currentUser, onVote, onDelete, onSave, onShare, format
 
   const isAuthor = currentUser?._id === post.author._id
   const userVote = post.userVote // This will come from backend based on current user
+
+  // Update saved state when post prop changes (for real-time updates)
+  useEffect(() => {
+    setIsSaved(post.isSaved || false)
+  }, [post.isSaved])
 
   const handleVoteClick = (voteType) => {
     // Map frontend vote types to backend expected values
@@ -40,13 +46,10 @@ const PostCard = ({ post, currentUser, onVote, onDelete, onSave, onShare, format
     
     setLoadingComments(true)
     try {
-      console.log('Loading comments for post:', post._id)
       const response = await commentService.getComments(post._id)
-      console.log('Comments response:', response)
       
       if (response.success && response.data) {
         setComments(response.data.comments || [])
-        console.log('Loaded comments:', response.data.comments)
       }
     } catch (error) {
       console.error('Error loading comments:', error)
@@ -540,8 +543,15 @@ const PostCard = ({ post, currentUser, onVote, onDelete, onSave, onShare, format
           <button 
             onClick={async () => {
               if (currentUser && onSave) {
-                await onSave(post._id, isSaved)
-                setIsSaved(!isSaved)
+                try {
+                  // Optimistic update
+                  setIsSaved(!isSaved)
+                  await onSave(post._id, isSaved)
+                } catch (error) {
+                  // Revert on error
+                  setIsSaved(isSaved)
+                  showToast('Failed to save post', 'error')
+                }
               }
             }}
             className={`flex items-center space-x-2 transition-colors ${
@@ -551,8 +561,12 @@ const PostCard = ({ post, currentUser, onVote, onDelete, onSave, onShare, format
             }`}
             disabled={!currentUser}
           >
-            <FiHeart className={`w-5 h-5 ${isSaved ? 'fill-current' : ''}`} />
-            <span>{isSaved ? 'Saved' : 'Save'}</span>
+{isSaved ? (
+              <FaHeart className="w-5 h-5" />
+            ) : (
+              <FiHeart className="w-5 h-5" />
+            )}
+            <span>{isSaved ? 'Saved ✓' : 'Save'}</span>
           </button>
         </div>
 

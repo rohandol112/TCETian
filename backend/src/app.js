@@ -1,8 +1,11 @@
+// Load environment variables FIRST before any other imports
+import dotenv from 'dotenv'
+dotenv.config({ path: '.env' })
+
 import express from 'express'
 import cors from 'cors'
 import helmet from 'helmet'
 import morgan from 'morgan'
-import dotenv from 'dotenv'
 import rateLimit from 'express-rate-limit'
 import http from 'http'
 
@@ -13,15 +16,34 @@ import eventRoutes from './routes/eventRoutes.js'
 import postRoutes from './routes/postRoutes.js'
 import commentRoutes from './routes/commentRoutes.js'
 import analyticsRoutes from './routes/analyticsRoutes.js'
+import forumRoutes from './routes/forumRoutes.js'
+
 
 import { errorHandler, notFound } from './middleware/errorHandler.js'
 import socketService from './services/socketService.js'
+import { ConnectionMonitor, trackConcurrentRequests } from './utils/connectionMonitor.js'
+import { startCluster } from './config/cluster.js'
+import RedisManager from './config/redis.js'
+import performanceRoutes from './routes/performanceRoutes.js'
+import { upload } from './utils/imageHandler.js'
 
-dotenv.config()
+// Enable clustering for production
+if (process.env.ENABLE_CLUSTERING === 'true') {
+  if (!startCluster()) {
+    process.exit(0) // Exit if this is the master process
+  }
+}
 
 const app = express()
+
+// High-concurrency server configuration
 const server = http.createServer(app)
-const PORT = process.env.PORT || 5001
+server.keepAliveTimeout = 65000  // Keep connections alive longer
+server.headersTimeout = 66000    // Prevent header timeout issues
+server.maxHeadersCount = 2000    // Increase max headers
+server.timeout = 120000          // 2 minute timeout for requests
+
+const PORT = process.env.PORT || 5000
 
 // Initialize WebSocket service
 socketService.initialize(server)
@@ -29,8 +51,11 @@ socketService.initialize(server)
 // Trust proxy
 app.set('trust proxy', 1)
 
-// Connect to MongoDB
-connectDB()
+// Start connection monitoring
+ConnectionMonitor.startMonitoring()
+
+// Track concurrent requests
+app.use(trackConcurrentRequests())
 
 // Security middleware
 app.use(helmet())
@@ -54,7 +79,15 @@ app.use(cors({
   ],
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+  allowedHeaders: [
+    'Content-Type', 
+    'Authorization', 
+    'X-Requested-With',
+    'Cache-Control',
+    'Pragma',
+    'Expires'
+  ],
+  exposedHeaders: ['Authorization'],
   optionsSuccessStatus: 200
 }))
 
@@ -62,8 +95,13 @@ app.use(cors({
 app.use(express.json({ limit: '10mb' }))
 app.use(express.urlencoded({ extended: true, limit: '10mb' }))
 
-// Serve static files (uploads)
-app.use('/uploads', express.static('uploads'))
+// Serve static files (uploads) with proper CORS headers
+app.use('/uploads', (req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*')
+  res.header('Access-Control-Allow-Methods', 'GET')
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept')
+  next()
+}, express.static('uploads'))
 
 // Logging
 if (process.env.NODE_ENV === 'development') {
@@ -75,7 +113,82 @@ app.get('/health', (req, res) => {
   res.status(200).json({ 
     status: 'OK', 
     message: 'TCETian API is running!',
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
+    port: PORT,
+    env: process.env.NODE_ENV,
+    uploadsDir: 'uploads/',
+    staticFileServing: 'enabled'
+  })
+})
+
+// Test image upload endpoint (for debugging)
+app.post('/test-upload', upload.single('poster'), async (req, res) => {
+  console.log('🧪 Test upload received:', {
+    file: req.file,
+    body: req.body,
+    contentType: req.headers['content-type']
+  })
+  
+  if (req.file) {
+    try {
+      const { imageHandler } = await import('./utils/imageHandler.js')
+      const imageUrl = imageHandler.processUploadedImage ? imageHandler.processUploadedImage(req.file) : `/uploads/events/${req.file.filename}`
+      
+      res.json({
+        success: true,
+        message: 'Test upload successful',
+        file: {
+          fieldname: req.file.fieldname,
+          originalname: req.file.originalname,
+          filename: req.file.filename,
+          size: req.file.size,
+          mimetype: req.file.mimetype,
+          path: req.file.path,
+          url: imageUrl
+        }
+      })
+    } catch (error) {
+      console.error('Test upload error:', error)
+      res.status(500).json({
+        success: false,
+        message: 'Error processing uploaded file: ' + error.message
+      })
+    }
+  } else {
+    res.status(400).json({
+      success: false,
+      message: 'No file received - expected field name: poster'
+    })
+  }
+})
+
+// Test tag processing endpoint
+app.post('/test-tags', (req, res) => {
+  console.log('🏷️ Test tags received:', {
+    body: req.body,
+    tags: req.body.tags,
+    tagsType: typeof req.body.tags
+  })
+  
+  let processedTags = []
+  
+  if (req.body.tags && typeof req.body.tags === 'string') {
+    try {
+      processedTags = JSON.parse(req.body.tags)
+      console.log('🏷️ Parsed tags:', processedTags)
+    } catch (err) {
+      console.error('❌ Error parsing tags:', err)
+      processedTags = []
+    }
+  }
+  
+  res.json({
+    success: true,
+    received: {
+      raw: req.body.tags,
+      type: typeof req.body.tags,
+      processed: processedTags
+    }
   })
 })
 
@@ -85,15 +198,56 @@ app.use('/api/users', userRoutes)
 app.use('/api/events', eventRoutes)
 app.use('/api/posts', postRoutes)
 app.use('/api/comments', commentRoutes)
+app.use('/api/forums', forumRoutes)
 app.use('/api/analytics', analyticsRoutes)
+
+
+// Performance monitoring routes
+if (process.env.NODE_ENV === 'development' || process.env.ENABLE_PERFORMANCE_MONITORING === 'true') {
+  app.use('/api/performance', performanceRoutes)
+}
 
 // Error handling middleware
 app.use(notFound)
 app.use(errorHandler)
 
-server.listen(PORT, () => {
-  console.log(`🚀 TCETian Backend running on port ${PORT}`)
-  console.log(`📊 Environment: ${process.env.NODE_ENV}`)
-  console.log(`🌐 Health check: http://localhost:${PORT}/health`)
-  console.log(`🔌 WebSocket server initialized`)
-})
+// Startup sequence - ensure database connection before starting server
+const startServer = async () => {
+  try {
+    // Connect to MongoDB first
+    console.log('📦 Connecting to MongoDB...')
+    await connectDB()
+    
+    // Initialize Redis connection
+    console.log('📡 Connecting to Redis...')
+    await RedisManager.connect()
+    
+    // Test email service connection
+    console.log('📧 Testing email service...')
+    const { default: EmailService } = await import('./services/emailService.js')
+    const emailService = new EmailService()
+    await emailService.testConnection()
+    
+    // Start reminder service for automated emails
+    console.log('📅 Starting reminder service...')
+    const { default: reminderService } = await import('./services/reminderService.js')
+    reminderService.start()
+    
+    // Start the server
+    server.listen(PORT, () => {
+      console.log(`🚀 TCETian Backend running on port ${PORT}`)
+      console.log(`📊 Environment: ${process.env.NODE_ENV}`)
+      console.log(`🌐 Health check: http://localhost:${PORT}/health`)
+      console.log(`🔌 WebSocket server initialized`)
+      console.log(`👷 Worker PID: ${process.pid}`)
+      console.log(`🎯 Ready for high concurrency!`)
+    })
+    
+  } catch (error) {
+    console.error('❌ Server startup failed:', error.message)
+    process.exit(1)
+  }
+}
+
+// Start the application
+startServer()

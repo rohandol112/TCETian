@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { useSocket } from '../context/SocketContext'
 import { useToast } from '../context/ToastContext'
@@ -9,13 +10,20 @@ import {
 } from 'react-icons/fi'
 import { userService } from '../services/userService'
 import UserAnalytics from '../components/analytics/UserAnalytics'
-// import LiveEventFeed from '../components/events/LiveEventFeed'
-// import EventAnalytics from '../components/events/EventAnalytics'
-import QuickEventCreator from '../components/events/QuickEventCreator'
 
 const Profile = () => {
   const { user: currentUser, updateUser } = useAuth()
-  const { isConnected, onProfileUpdate } = useSocket()
+  // Use socket safely (may not be available)
+  let isConnected = false
+  let onProfileUpdate = () => () => {} // Return a cleanup function
+  
+  try {
+    const socketContext = useSocket()
+    isConnected = socketContext.isConnected
+    onProfileUpdate = socketContext.onProfileUpdate
+  } catch (error) {
+    console.warn('Socket context not available:', error.message)
+  }
   const { showToast } = useToast()
   
   const [profile, setProfile] = useState(null)
@@ -47,31 +55,52 @@ const Profile = () => {
   const loadProfile = async () => {
     try {
       setLoading(true)
-      const [profileRes, activityRes] = await Promise.all([
-        userService.getProfile(),
-        userService.getUserActivity({ days: 7 })
-      ])
-
-      if (profileRes.success) {
-        setProfile(profileRes.data.user)
-        setStats(profileRes.data.stats)
-        setOnlineStatus(profileRes.data.onlineStatus)
-        setFormData({
-          name: profileRes.data.user.name || '',
-          description: profileRes.data.user.description || '',
-          year: profileRes.data.user.year || '',
-          branch: profileRes.data.user.branch || '',
-          courseType: profileRes.data.user.courseType || '',
-          clubName: profileRes.data.user.clubName || ''
-        })
+      
+      // Try to get profile first
+      try {
+        const profileRes = await userService.getProfile()
+        if (profileRes.success) {
+          setProfile(profileRes.data.user)
+          setStats(profileRes.data.stats || {})
+          setOnlineStatus(profileRes.data.onlineStatus || {})
+          setFormData({
+            name: profileRes.data.user.name || '',
+            description: profileRes.data.user.description || '',
+            year: profileRes.data.user.year || '',
+            branch: profileRes.data.user.branch || '',
+            courseType: profileRes.data.user.courseType || '',
+            clubName: profileRes.data.user.clubName || ''
+          })
+        }
+      } catch (profileError) {
+        console.error('Error loading profile:', profileError)
+        // Use current user data as fallback
+        if (currentUser) {
+          setProfile(currentUser)
+          setFormData({
+            name: currentUser.name || '',
+            description: currentUser.description || '',
+            year: currentUser.year || '',
+            branch: currentUser.branch || '',
+            courseType: currentUser.courseType || '',
+            clubName: currentUser.clubName || ''
+          })
+        }
       }
 
-      if (activityRes.success) {
-        setRecentActivity(activityRes.data.activitySummary)
+      // Try to get activity data (optional)
+      try {
+        const activityRes = await userService.getUserActivity({ days: 7 })
+        if (activityRes.success) {
+          setRecentActivity(activityRes.data.activitySummary || [])
+        }
+      } catch (activityError) {
+        console.error('Error loading activity:', activityError)
+        // Activity is optional, continue without it
       }
     } catch (error) {
-      console.error('Error loading profile:', error)
-      showToast('Failed to load profile', 'error')
+      console.error('Error in loadProfile:', error)
+      showToast('Some profile data could not be loaded', 'warning')
     } finally {
       setLoading(false)
     }
@@ -378,7 +407,6 @@ const Profile = () => {
                   { id: 'overview', label: 'Overview', icon: FiActivity },
                   { id: 'analytics', label: 'Analytics', icon: FiBarChart },
                   ...(profile?.role === 'club' ? [
-                    { id: 'events', label: 'Event Dashboard', icon: FiCalendar },
                     { id: 'event-analytics', label: 'Event Analytics', icon: FiTrendingUp }
                   ] : []),
                   { id: 'saved', label: 'Saved Posts', icon: FiBookmark },
@@ -402,6 +430,26 @@ const Profile = () => {
               {/* Tab Content */}
               {activeTab === 'overview' && (
                 <div className="space-y-6">
+                  {/* Club Quick Actions */}
+                  {profile?.role === 'club' && (
+                    <div className="glass rounded-xl p-6 border-2 border-purple-500/30">
+                      <div className="flex items-center justify-between mb-4">
+                        <h4 className="text-lg font-semibold text-purple-300">Event Management</h4>
+                        <FiCalendar className="w-6 h-6 text-purple-400" />
+                      </div>
+                      <p className="text-gray-300 mb-4">
+                        Create new events, view RSVPs, and manage all your events directly from the Events page.
+                      </p>
+                      <Link 
+                        to="/events" 
+                        className="btn-gradient px-6 py-3 rounded-lg font-semibold inline-flex items-center space-x-2"
+                      >
+                        <FiCalendar className="w-4 h-4" />
+                        <span>Go to Events Page</span>
+                      </Link>
+                    </div>
+                  )}
+
                   {/* Stats */}
                   <div>
                     <h4 className="text-lg font-semibold mb-4">Activity Stats</h4>
@@ -455,72 +503,6 @@ const Profile = () => {
 
               {activeTab === 'analytics' && (
                 <UserAnalytics />
-              )}
-
-              {activeTab === 'events' && profile?.role === 'club' && (
-                <div className="space-y-6">
-                  <h4 className="text-lg font-semibold mb-4">Club Event Dashboard</h4>
-                  
-                  <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-                    {/* Event Creation */}
-                    <QuickEventCreator 
-                      onEventCreated={(newEvent) => {
-                        console.log('New event created from dashboard:', newEvent)
-                        loadProfile() // Refresh stats
-                      }}
-                    />
-                    
-                    {/* Club Stats */}
-                    <div className="glass rounded-xl p-6">
-                      <h5 className="text-lg font-semibold mb-4">Club Performance</h5>
-                      
-                      <div className="grid grid-cols-2 gap-4 mb-6">
-                        <div className="text-center p-4 bg-gradient-to-r from-purple-500/20 to-pink-500/20 rounded-lg">
-                          <div className="text-2xl font-bold text-white">{stats?.eventsCreated || 0}</div>
-                          <div className="text-sm text-gray-400">Events Created</div>
-                        </div>
-                        <div className="text-center p-4 bg-gradient-to-r from-green-500/20 to-teal-500/20 rounded-lg">
-                          <div className="text-2xl font-bold text-white">{stats?.totalRSVPs || 0}</div>
-                          <div className="text-sm text-gray-400">Total RSVPs</div>
-                        </div>
-                      </div>
-                      
-                      <div className="space-y-3">
-                        <div className="flex justify-between items-center p-3 bg-white/5 rounded-lg">
-                          <span className="text-gray-300 flex items-center">
-                            <FiCalendar className="w-4 h-4 mr-2 text-blue-400" />
-                            Upcoming Events
-                          </span>
-                          <span className="font-semibold text-blue-400">{stats?.upcomingEvents || 0}</span>
-                        </div>
-                        <div className="flex justify-between items-center p-3 bg-white/5 rounded-lg">
-                          <span className="text-gray-300 flex items-center">
-                            <FiUsers className="w-4 h-4 mr-2 text-green-400" />
-                            Club Followers
-                          </span>
-                          <span className="font-semibold text-green-400">{stats?.followers || 0}</span>
-                        </div>
-                        <div className="flex justify-between items-center p-3 bg-white/5 rounded-lg">
-                          <span className="text-gray-300 flex items-center">
-                            <FiTrendingUp className="w-4 h-4 mr-2 text-yellow-400" />
-                            Avg. Attendance
-                          </span>
-                          <span className="font-semibold text-yellow-400">
-                            {stats?.eventsCreated > 0 ? Math.round((stats?.totalRSVPs || 0) / stats?.eventsCreated) : 0}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Recent Events */}
-                  <div className="glass rounded-xl p-6">
-                    <h5 className="text-lg font-semibold mb-4">Recent Events</h5>
-                    <div className="space-y-3">
-                      <p className="text-gray-400 text-center py-8">Recent events list coming soon</p>
-                    </div>
-                  </div>
-                </div>
               )}
 
               {activeTab === 'event-analytics' && profile?.role === 'club' && (

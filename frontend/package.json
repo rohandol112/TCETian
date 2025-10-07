@@ -18,6 +18,8 @@
     "react-hook-form": "^7.48.2",
     "react-icons": "^4.12.0",
     "react-router-dom": "^6.20.1",
+    "react-window": "^2.2.0",
+    "react-window-infinite-loader": "^2.0.0",
     "socket.io-client": "^4.8.1",
     "sweetalert2": "^11.10.1",
     "tailwindcss": "^4.0.0-alpha.19",

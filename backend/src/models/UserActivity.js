@@ -11,7 +11,7 @@ const userActivitySchema = new mongoose.Schema({
     enum: [
       'post_created', 'post_viewed', 'post_upvoted', 'post_downvoted', 'post_saved',
       'comment_created', 'comment_upvoted', 'comment_downvoted', 
-      'user_login', 'user_logout', 'post_shared', 'profile_updated',
+      'user_login', 'user_logout', 'post_shared', 'profile_updated', 'profile_viewed',
       'socket_connected', 'socket_disconnected', 'room_joined', 'room_left'
     ],
     required: true

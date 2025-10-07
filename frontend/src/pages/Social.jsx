@@ -188,6 +188,15 @@ const Social = () => {
     }
 
     try {
+      // Optimistic update
+      setPosts(prevPosts => 
+        prevPosts.map(post => 
+          post._id === postId 
+            ? { ...post, isSaved: !isSaved }
+            : post
+        )
+      )
+
       if (isSaved) {
         await postService.unsavePost(postId)
         showToast('Post removed from saved', 'success')
@@ -195,9 +204,16 @@ const Social = () => {
         await postService.savePost(postId)
         showToast('Post saved successfully', 'success')
       }
-      fetchPosts() // Refresh to get updated save status
     } catch (error) {
-      showToast(error.message, 'error')
+      // Revert optimistic update on error
+      setPosts(prevPosts => 
+        prevPosts.map(post => 
+          post._id === postId 
+            ? { ...post, isSaved: isSaved }
+            : post
+        )
+      )
+      showToast(error.message || 'Failed to save post', 'error')
     }
   }
 
@@ -268,7 +284,7 @@ const Social = () => {
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-12">
               <div className="glass rounded-xl p-6 text-center">
                 <FiMessageCircle className="w-12 h-12 text-purple-400 mx-auto mb-4" />
-                <h3 className="text-lg font-semibold mb-2">Discussion Forums</h3>
+                <h3 className="text-lg font-semibold mb-2">Social Discussions</h3>
                 <p className="text-gray-300">Engage in academic discussions, get help with assignments, and share knowledge</p>
               </div>
               
@@ -410,18 +426,18 @@ const Social = () => {
             </div>
 
             {/* Controls */}
-            <div className="flex flex-col md:flex-row gap-4 mb-8">
-              {/* Search */}
-              <div className="relative flex-1">
-                <FiSearch className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
-                <input
-                  type="text"
-                  placeholder="Search posts..."
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  className="w-full pl-10 pr-4 py-3 bg-white/10 border border-white/20 rounded-xl focus:outline-none focus:ring-2 focus:ring-purple-500"
-                />
-              </div>
+                <div className="flex flex-col md:flex-row gap-4 mb-8">
+                  {/* Search */}
+                  <div className="relative flex-1">
+                    <FiSearch className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
+                    <input
+                      type="text"
+                      placeholder="Search posts..."
+                      value={searchTerm}
+                      onChange={(e) => setSearchTerm(e.target.value)}
+                      className="w-full pl-10 pr-4 py-3 bg-white/10 border border-white/20 rounded-xl focus:outline-none focus:ring-2 focus:ring-purple-500"
+                    />
+                  </div>
 
               {/* Sort */}
               <select
