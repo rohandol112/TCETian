@@ -6,9 +6,10 @@
   "type": "module",
   "scripts": {
     "dev": "nodemon src/app.js",
-    "start": "node src/app.js",
+    "start": "node start.js",
+    "start:legacy": "node src/app.js",
     "start:cluster": "ENABLE_CLUSTERING=true node src/app.js",
-    "start:production": "NODE_ENV=production ENABLE_CLUSTERING=true ENABLE_REDIS=true node src/app.js",
+    "start:production": "NODE_ENV=production ENABLE_CLUSTERING=true ENABLE_REDIS=true node start.js",
     "debug": "node src/debug-start.js",
     "debug:upload": "node debug-server.js",
     "test": "node --test",

@@ -1,0 +1,50 @@
+services:
+  - type: web
+    name: tcetian-backend
+    env: node
+    plan: free
+    buildCommand: npm ci
+    startCommand: npm start
+    healthCheckPath: /health
+    disk:
+      name: tcetian-uploads
+      mountPath: /app/uploads
+      sizeGB: 1
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 5000
+      - key: ENABLE_CLUSTERING
+        value: false
+      - key: ENABLE_REDIS
+        value: false
+      - key: FRONTEND_URL
+        value: https://tcetian.vercel.app
+      - key: RATE_LIMIT_WINDOW_MS
+        value: 900000
+      - key: RATE_LIMIT_MAX_REQUESTS
+        value: 200
+      - key: JWT_SECRET
+        generateValue: true
+      - key: JWT_EXPIRES_IN
+        value: 7d
+      - key: MONGODB_URI
+        fromDatabase:
+          name: tcetian-db
+          property: connectionString
+      - key: EMAIL_SERVICE
+        value: gmail
+      - key: EMAIL_USER
+        sync: false
+      - key: EMAIL_PASS
+        sync: false
+    autoDeploy: true
+    region: singapore
+    
+databases:
+  - name: tcetian-db
+    databaseName: tcetian
+    user: tcetian_user
+    plan: free
+    region: singapore
