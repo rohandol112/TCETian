@@ -1,5 +1,11 @@
 // Determine API base URL based on environment
 const getApiBaseUrl = () => {
+  // Only use API calls on client-side to avoid Vercel DNS issues
+  if (typeof window === 'undefined') {
+    console.warn('🚨 API calls attempted on server-side - blocked to prevent DNS errors')
+    return null
+  }
+
   // Check for explicit VITE_API_URL first
   if (import.meta.env.VITE_API_URL) {
     return import.meta.env.VITE_API_URL
@@ -73,6 +79,18 @@ class ApiService {
 
   // Generic API call method
   async apiCall(endpoint, options = {}) {
+    // Block server-side API calls to prevent Vercel DNS errors
+    if (typeof window === 'undefined') {
+      console.warn('🚨 API call blocked on server-side:', endpoint)
+      return { success: false, message: 'Server-side API calls are disabled' }
+    }
+
+    // Check if baseURL is available (null on server-side)
+    if (!this.baseURL) {
+      console.warn('🚨 API baseURL not available')
+      return { success: false, message: 'API not available' }
+    }
+
     const url = `${this.baseURL}${endpoint}`
     const isFormData = options.body instanceof FormData
     

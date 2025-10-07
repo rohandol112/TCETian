@@ -65,6 +65,12 @@ export const AuthProvider = ({ children }) => {
   const [state, dispatch] = useReducer(authReducer, initialState)
   
   useEffect(() => {
+    // Only run on client-side to prevent Vercel DNS issues
+    if (typeof window === 'undefined') {
+      dispatch({ type: 'LOGOUT' })
+      return
+    }
+
     // Check if user is authenticated on app load
     if (authService.isAuthenticated()) {
       loadUser()
