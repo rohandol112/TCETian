@@ -93,7 +93,7 @@ const Footer = () => {
                 to="/terms" 
                 className="text-sm text-gray-300 hover:text-white transition-colors duration-200"
               >
-                Terms of Service
+                Terms of Service Rishabh Bro
               </Link>
             </div>
           </div>
